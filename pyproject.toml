@@ -1,0 +1,25 @@
+[project]
+name = "slave-streamlit"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Fernando Corrales",email = "fscorrales@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.14,<3.16"
+dependencies = [
+    "streamlit (>=1.64.0,<2.0.0)",
+    "httpx (>=0.28.1,<0.29.0)",
+    "pandas (>=3.0.6,<4.0.0)",
+    "pydantic (>=2.13.5,<3.0.0)",
+    "python-dotenv (>=1.2.3,<2.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+pyinstaller = "^6.22.3"
+
