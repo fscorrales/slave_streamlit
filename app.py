@@ -102,6 +102,7 @@ def build_navigation() -> None:
         cols[0].write(f"👤 **{username}**")
 
         if cols[1].button("Log out", key="logout_btn"):
+            st.session_state.app_closing = True
             st.session_state["token"] = None
             st.session_state["user"] = None
             st.rerun()
