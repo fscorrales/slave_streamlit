@@ -4,8 +4,8 @@ __all__ = ["get_current_user", "login", "register"]
 
 import httpx
 
-from config import settings
 from models.schemas import PublicStoredUser
+from utils.config import settings
 import utils.exceptions as ex
 
 BASE_URL: str = settings.BASE_URL
