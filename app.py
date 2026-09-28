@@ -1,44 +1,152 @@
+"""INVICO Slave — Entrypoint principal.
+
+Usa st.navigation() para construir el sidebar de navegación MPA
+con los módulos de Precarizados, Honorarios y Reportes.
+"""
+
+import os
+import time
+
 import streamlit as st
-import httpx
-from services.api_slave import fetch_factureros, fetch_honorarios
 
-st.set_page_config(page_title="Migración Slave VB6", layout="wide")
+from utils.version import get_version
 
-st.sidebar.title("Navegación")
-opcion = st.sidebar.radio("Ir a", ["Inicio", "Carga de Honorarios", "Padrón de Factureros"])
+st.set_page_config(
+    page_title="INVICO Slave",
+    page_icon="⛓️",
+    layout="wide",
+)
 
-if opcion == "Inicio":
-    st.title("Bienvenido a Slave Streamlit")
-    st.write("Seleccione una opción en el menú lateral.")
+st.markdown(
+    """
+    <style>
+        .stAppDeployButton {
+            display: none !important;
+        }
+    </style>
+""",
+    unsafe_allow_html=True,
+)
 
-elif opcion == "Carga de Honorarios":
-    st.title("Carga de Honorarios")
-    st.write("Subida de CSV de comprobantes + inputs manuales globales")
-    # TODO: UI para subir CSV y llenar inputs manuales
-    
-    if st.button("Ver honorarios actuales"):
-        try:
-            honorarios = fetch_honorarios()
-            st.json(honorarios)
-        except httpx.HTTPStatusError as e:
-            st.error(f"Error HTTP del servidor: {e.response.status_code} - {e.response.text}")
-        except httpx.RequestError as e:
-            st.error(f"Error de conexión con la API: {e}")
-        except Exception as e:
-            st.error(f"Error inesperado: {e}")
 
-elif opcion == "Padrón de Factureros":
-    st.title("Padrón de Factureros")
-    st.write("Importación CSV y formulario/editor para asignar la estructura presupuestaria por CUIT")
-    # TODO: UI para importar CSV y editor por CUIT
-    
-    if st.button("Obtener Factureros"):
-        try:
-            factureros = fetch_factureros()
-            st.json(factureros)
-        except httpx.HTTPStatusError as e:
-            st.error(f"Error HTTP del servidor: {e.response.status_code} - {e.response.text}")
-        except httpx.RequestError as e:
-            st.error(f"Error de conexión con la API: {e}")
-        except Exception as e:
-            st.error(f"Error inesperado: {e}")
+# Control de cierre de aplicación
+if "app_closing" not in st.session_state:
+    st.session_state.app_closing = False
+
+if st.session_state.app_closing:
+    st.empty()
+    st.markdown(
+        """
+        <style>
+            [data-testid="stSidebar"] {display: none;}
+        </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    st.write("#")
+    st.success("### 🔒 Sesión Finalizada")
+    st.write("La aplicación de **INVICO Slave** se ha detenido correctamente.")
+    st.info("Ya puedes cerrar esta ventana del navegador.")
+
+    time.sleep(1)
+    os._exit(0)
+
+
+# ──────────────────────────────────────────────
+# Inicialización del estado de sesión
+# ──────────────────────────────────────────────
+def initialize_state() -> None:
+    """Inicializa las claves mínimas en session_state."""
+    if "token" not in st.session_state:
+        st.session_state["token"] = "dev-token"  # Temporal hasta integrar login
+    if "user" not in st.session_state or st.session_state["user"] is None:
+        st.session_state["user"] = {
+            "username": "Usuario",
+            "role": "admin",
+        }
+
+
+# ──────────────────────────────────────────────
+# Navegación MPA
+# ──────────────────────────────────────────────
+def build_navigation() -> None:
+    """Construye la navegación con st.navigation y ejecuta la página."""
+    user = st.session_state.get("user") or {}
+    username = user.get("username", "Usuario")
+
+    pages: list[st.Page] = [
+        st.Page(
+            "pages/precarizados.py",
+            title="Precarizados",
+            icon="👥",
+        ),
+        st.Page(
+            "pages/honorarios.py",
+            title="Honorarios",
+            icon="💼",
+        ),
+        st.Page(
+            "pages/reportes.py",
+            title="Reportes (en construcción)",
+            icon="📊",
+        ),
+    ]
+
+    pg = st.navigation(pages)
+
+    # Sidebar: Info de usuario, logout y versión
+    with st.sidebar:
+        # Espacio vertical para empujar el bloque de usuario hacia el fondo
+        for _ in range(1):
+            st.write("")
+
+        st.divider()
+
+        # Bloque de Usuario y Logout
+        cols = st.columns([0.6, 0.4], vertical_alignment="center")
+        cols[0].write(f"👤 **{username}**")
+
+        if cols[1].button("Log out", key="logout_spacer"):
+            st.session_state.app_closing = True
+            st.session_state["token"] = None
+            st.session_state["user"] = None
+            st.rerun()
+
+        with st.container():
+            st.caption(f"Versión: {get_version()}", text_alignment="center")
+
+    # CSS para optimizar el padding superior
+    st.markdown(
+        """
+        <style>
+            .block-container {
+                padding-top: 1rem !important;
+            }
+            .stAppHeader {
+                background-color: transparent !important;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    pg.run()
+
+
+# ──────────────────────────────────────────────
+# Main
+# ──────────────────────────────────────────────
+def main() -> None:
+    initialize_state()
+
+    # Más adelante se incorporará render_login() cuando se active el login:
+    # if not st.session_state.get("token"):
+    #     render_login()
+    # else:
+    #     build_navigation()
+    build_navigation()
+
+
+if __name__ == "__main__":
+    main()
