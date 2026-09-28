@@ -8,6 +8,18 @@ import utils.exceptions as ex
 
 def render_login() -> None:
     """Renderiza el formulario de login y registro de forma compacta y centrada."""
+    # Ocultar la barra lateral completamente durante la pantalla de login
+    st.markdown(
+        """
+        <style>
+            [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {
+                display: none !important;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     _, col, _ = st.columns([1, 2, 1])
 
     with col:

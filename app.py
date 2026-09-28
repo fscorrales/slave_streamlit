@@ -9,8 +9,8 @@ import time
 
 import streamlit as st
 
-from pages.login import render_login
 from utils.version import get_version
+from views.login import render_login
 
 st.set_page_config(
     page_title="INVICO Slave",
@@ -75,17 +75,17 @@ def build_navigation() -> None:
 
     pages: list[st.Page] = [
         st.Page(
-            "pages/precarizados.py",
+            "views/precarizados.py",
             title="Precarizados",
             icon="👥",
         ),
         st.Page(
-            "pages/honorarios.py",
+            "views/honorarios.py",
             title="Honorarios",
             icon="💼",
         ),
         st.Page(
-            "pages/reportes.py",
+            "views/reportes.py",
             title="Reportes (en construcción)",
             icon="📊",
         ),
