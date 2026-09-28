@@ -16,8 +16,10 @@ def render_precarizados() -> None:
     # TODO: UI para importar CSV y editor por CUIT
 
     if st.button("Obtener Factureros", key="btn_fetch_factureros"):
+        token = st.session_state.get("token")
         try:
-            factureros = fetch_factureros()
+            with st.spinner("Consultando factureros..."):
+                factureros = fetch_factureros(token=token)
             st.json(factureros)
         except httpx.HTTPStatusError as exc:
             st.error(f"Error HTTP del servidor: {exc.response.status_code} - {exc.response.text}")

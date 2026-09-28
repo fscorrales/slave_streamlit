@@ -1,6 +1,6 @@
 """INVICO Slave — Entrypoint principal.
 
-Usa st.navigation() para construir el sidebar de navegación MPA
+Gestiona el flujo de autenticación (Login) y la navegación MPA
 con los módulos de Precarizados, Honorarios y Reportes.
 """
 
@@ -9,6 +9,7 @@ import time
 
 import streamlit as st
 
+from pages.login import render_login
 from utils.version import get_version
 
 st.set_page_config(
@@ -59,12 +60,9 @@ if st.session_state.app_closing:
 def initialize_state() -> None:
     """Inicializa las claves mínimas en session_state."""
     if "token" not in st.session_state:
-        st.session_state["token"] = "dev-token"  # Temporal hasta integrar login
-    if "user" not in st.session_state or st.session_state["user"] is None:
-        st.session_state["user"] = {
-            "username": "Usuario",
-            "role": "admin",
-        }
+        st.session_state["token"] = None
+    if "user" not in st.session_state:
+        st.session_state["user"] = None
 
 
 # ──────────────────────────────────────────────
@@ -97,18 +95,13 @@ def build_navigation() -> None:
 
     # Sidebar: Info de usuario, logout y versión
     with st.sidebar:
-        # Espacio vertical para empujar el bloque de usuario hacia el fondo
-        for _ in range(1):
-            st.write("")
-
         st.divider()
 
         # Bloque de Usuario y Logout
         cols = st.columns([0.6, 0.4], vertical_alignment="center")
         cols[0].write(f"👤 **{username}**")
 
-        if cols[1].button("Log out", key="logout_spacer"):
-            st.session_state.app_closing = True
+        if cols[1].button("Log out", key="logout_btn"):
             st.session_state["token"] = None
             st.session_state["user"] = None
             st.rerun()
@@ -140,12 +133,11 @@ def build_navigation() -> None:
 def main() -> None:
     initialize_state()
 
-    # Más adelante se incorporará render_login() cuando se active el login:
-    # if not st.session_state.get("token"):
-    #     render_login()
-    # else:
-    #     build_navigation()
-    build_navigation()
+    # Si el usuario no está autenticado, mostramos la pantalla de login
+    if not st.session_state.get("token"):
+        render_login()
+    else:
+        build_navigation()
 
 
 if __name__ == "__main__":

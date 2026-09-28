@@ -1,14 +1,37 @@
-from pydantic import BaseModel
+"""Modelos Pydantic para el sistema INVICO Slave."""
+
 from datetime import datetime
+from enum import Enum
+from pydantic import BaseModel
+
+
+class Role(str, Enum):
+    """Roles de usuario reconocidos por el sistema."""
+
+    ADMIN = "admin"
+    USER = "user"
+    PENDING = "pending"
+
+
+class PublicStoredUser(BaseModel):
+    """Modelo de usuario devuelto por el backend (/users/me)."""
+
+    id: str
+    username: str
+    role: Role
 
 
 class FactureroReport(BaseModel):
+    """Modelo de datos para reporte de factureros."""
+
     cuit: str
     nombre: str
     estructura: str
 
 
 class HonorarioReport(BaseModel):
+    """Modelo de datos para reporte de honorarios."""
+
     ejercicio: int
     mes: str
     fecha: datetime

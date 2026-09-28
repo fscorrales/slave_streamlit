@@ -14,8 +14,10 @@ def render_honorarios() -> None:
     # TODO: UI para subir CSV y llenar inputs manuales
 
     if st.button("Ver honorarios actuales", key="btn_fetch_honorarios"):
+        token = st.session_state.get("token")
         try:
-            honorarios = fetch_honorarios()
+            with st.spinner("Consultando honorarios..."):
+                honorarios = fetch_honorarios(token=token)
             st.json(honorarios)
         except httpx.HTTPStatusError as exc:
             st.error(f"Error HTTP del servidor: {exc.response.status_code} - {exc.response.text}")
