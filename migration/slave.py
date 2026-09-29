@@ -152,6 +152,7 @@ class SlaveMongoMigrator:
             },
             inplace=True,
         )
+        df["actividad"] = df["actividad"].str[:3] + "00-" + df["actividad"].str[3:]
 
         # ----------------------------------------------------------
         # Enriquecer el DataFrame con el CUIT proveniente de
