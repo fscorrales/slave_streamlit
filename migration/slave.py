@@ -55,8 +55,15 @@ def validate_csv_file(value: Path) -> Path | None:
 # --------------------------------------------------
 class SlaveMongoMigrator:
     # --------------------------------------------------
-    def __init__(self, csv_path: Path):
+    def __init__(self, csv_path: Path, sgf_csv_path: Path | None = None):
         self.csv_path = csv_path
+        # Si no se proporciona, asumimos que sgf_proveedores.csv está en el
+        # mismo directorio que el CSV principal.
+        self.sgf_csv_path = (
+            sgf_csv_path
+            if sgf_csv_path is not None
+            else self.csv_path.parent / "sgf_proveedores.csv"
+        )
 
     # --------------------------------------------------
     def migrate_df_to_mongodb(
@@ -105,6 +112,53 @@ class SlaveMongoMigrator:
                 "Partida": "partida",
             },
             inplace=True,
+        )
+
+        # ----------------------------------------------------------
+        # Enriquecer el DataFrame con el CUIT proveniente de
+        # sgf_proveedores.csv. El archivo de proveedores tiene una
+        # estructura particular: las primeras 9 columnas son los
+        # nombres de los encabezados repetidos en cada fila, y los
+        # datos reales comienzan a partir de la columna 9. Por eso
+        # se lee con header=None y skiprows=1.
+        # ----------------------------------------------------------
+        if not self.sgf_csv_path.exists():
+            print(
+                f"⚠️ No se encontró el archivo de proveedores SGF en "
+                f"'{self.sgf_csv_path}'. Se omite el enriquecimiento con CUIT."
+            )
+            df["cuit"] = pd.NA
+        else:
+            df_sgf = pd.read_csv(
+                self.sgf_csv_path,
+                encoding="latin-1",
+                header=None,
+                skiprows=1,
+            )
+            # Seleccionamos Descripción (col 10) y CUIT (col 14) y
+            # renombramos para que coincida con la clave de join.
+            df_sgf = df_sgf[[10, 14]].copy()
+            df_sgf.columns = ["beneficiario", "cuit"]
+            # Un mismo beneficiario podría aparecer varias veces con
+            # distintos códigos; conservamos el primer CUIT asociado.
+            df_sgf = df_sgf.drop_duplicates(subset=["beneficiario"])
+            # Merge left para no perder filas del archivo principal
+            # cuando no haya coincidencia en el SGF.
+            df = df.merge(df_sgf, on="beneficiario", how="left")
+
+        # ----------------------------------------------------------
+        # Reporte del porcentaje de agentes con CUIT.
+        # ----------------------------------------------------------
+        total_agentes: int = len(df)
+        agentes_con_cuit: int = int(df["cuit"].notna().sum())
+        porcentaje_cuit: float = (
+            (agentes_con_cuit / total_agentes) * 100.0
+            if total_agentes > 0
+            else 0.0
+        )
+        print(
+            f"📊 Porcentaje de agentes con CUIT: {porcentaje_cuit:.2f}% "
+            f"({agentes_con_cuit}/{total_agentes})"
         )
 
         df["partida"] = df["partida"].astype(str)
