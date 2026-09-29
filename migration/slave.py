@@ -10,14 +10,39 @@ __all__ = ["SlaveMongoMigrator"]
 
 import json
 import os
+import re
 from pathlib import Path
 
 import pandas as pd
 import typer
 
 from migration.migration_client import MigrationClient
-from utils.endpoints import Endpoints
 from utils import print_rich_table
+from utils.endpoints import Endpoints
+
+
+# --------------------------------------------------
+def _normalize_name_for_match(name: object) -> str:
+    """
+    Normaliza un nombre para hacer matching robusto entre fuentes
+    heterogéneas (con/sin coma, con prefijos como ``(JUBILADO)`` o
+    ``[LP]``, mayúsculas/minúsculas distintas, etc.).
+
+    La idea es generar una clave estable que permita emparejar
+    variaciones del mismo agente sin alterar el nombre original que
+    se conserva en el DataFrame.
+    """
+    if pd.isna(name):
+        return ""
+    text: str = str(name).upper().strip()
+    # 1. Quitar prefijos opcionales entre paréntesis o corchetes al inicio.
+    text = re.sub(r"^\s*[\(\[][^\)\]]*[\)\]]\s*", "", text)
+    # 2. Reemplazar comas y puntos y coma por espacios.
+    text = re.sub(r"[,;]", " ", text)
+    # 3. Colapsar espacios múltiples.
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
 
 # --------------------------------------------------
 def validate_csv_file(value: Path) -> Path | None:
@@ -76,10 +101,24 @@ class SlaveMongoMigrator:
         try:
             records = df.to_dict(orient="records")
 
+            # Sanitizar NaN/NA/NaT -> None para que el resultado sea
+            # JSON-compliant. JSON no admite el literal ``NaN`` (que es
+            # lo que ``json.dumps`` emite por defecto para
+            # ``float('nan')``), por eso lo reemplazamos antes de
+            # serializar. En MongoDB los campos nulos se almacenan
+            # como ``null``.
+            sanitized_records: list[dict[str, object]] = [
+                {
+                    key: (None if pd.isna(value) else value)
+                    for key, value in record.items()
+                }
+                for record in records
+            ]
+
             # Aplicamos tu FIX directamente aquí
             clean_records = json.loads(
                 json.dumps(
-                    records,
+                    sanitized_records,
                     default=lambda x: (
                         x.isoformat() if hasattr(x, "isoformat") else str(x)
                     ),
@@ -102,12 +141,12 @@ class SlaveMongoMigrator:
 
         # Validación defensiva por si la lectura devolvió un DataFrame vacío
         if df.empty:
-            print(f"⚠️ El archivo está vacío.")
+            print("⚠️ El archivo está vacío.")
             return
 
         df.rename(
             columns={
-                "Agentes": "beneficiario",
+                "Agentes": "nombre_completo",
                 "Actividad": "actividad",
                 "Partida": "partida",
             },
@@ -121,6 +160,11 @@ class SlaveMongoMigrator:
         # nombres de los encabezados repetidos en cada fila, y los
         # datos reales comienzan a partir de la columna 9. Por eso
         # se lee con header=None y skiprows=1.
+        #
+        # Para mejorar el porcentaje de match se utiliza una clave
+        # normalizada (sin comas, sin prefijos ``(JUBILADO)`` /
+        # ``[LP]``, en mayúsculas y con espacios colapsados) que
+        # permite emparejar variaciones del mismo agente.
         # ----------------------------------------------------------
         if not self.sgf_csv_path.exists():
             print(
@@ -138,28 +182,42 @@ class SlaveMongoMigrator:
             # Seleccionamos Descripción (col 10) y CUIT (col 14) y
             # renombramos para que coincida con la clave de join.
             df_sgf = df_sgf[[10, 14]].copy()
-            df_sgf.columns = ["beneficiario", "cuit"]
-            # Un mismo beneficiario podría aparecer varias veces con
-            # distintos códigos; conservamos el primer CUIT asociado.
-            df_sgf = df_sgf.drop_duplicates(subset=["beneficiario"])
+            df_sgf.columns = ["nombre_completo", "cuit"]
+
+            # Construimos una clave de match normalizada y conservamos
+            # sólo el primer CUIT por clave para evitar duplicados.
+            df_sgf["_match_key"] = df_sgf["nombre_completo"].apply(
+                _normalize_name_for_match
+            )
+            df_sgf = df_sgf.drop_duplicates(subset=["_match_key"])
+
+            df["_match_key"] = df["nombre_completo"].apply(_normalize_name_for_match)
+
             # Merge left para no perder filas del archivo principal
             # cuando no haya coincidencia en el SGF.
-            df = df.merge(df_sgf, on="beneficiario", how="left")
+            df = df.merge(df_sgf[["_match_key", "cuit"]], on="_match_key", how="left")
+            df = df.drop(columns=["_match_key"])
+            # Elimina guiones respetando los nulos (sin hacer .astype(str) a todo el DF)
+            df["cuit"] = df["cuit"].str.replace("-", "", regex=False)
 
         # ----------------------------------------------------------
         # Reporte del porcentaje de agentes con CUIT.
         # ----------------------------------------------------------
         total_agentes: int = len(df)
         agentes_con_cuit: int = int(df["cuit"].notna().sum())
+        agentes_sin_cuit: int = total_agentes - agentes_con_cuit
         porcentaje_cuit: float = (
-            (agentes_con_cuit / total_agentes) * 100.0
-            if total_agentes > 0
-            else 0.0
+            (agentes_con_cuit / total_agentes) * 100.0 if total_agentes > 0 else 0.0
         )
         print(
             f"📊 Porcentaje de agentes con CUIT: {porcentaje_cuit:.2f}% "
             f"({agentes_con_cuit}/{total_agentes})"
         )
+        if agentes_sin_cuit > 0:
+            print(
+                f"⚠️ {agentes_sin_cuit} agente(s) quedaron sin CUIT y "
+                f"se enviarán como null a MongoDB."
+            )
 
         df["partida"] = df["partida"].astype(str)
         df = df.drop_duplicates()
@@ -177,13 +235,13 @@ class SlaveMongoMigrator:
 
         # Validación defensiva por si la lectura devolvió un DataFrame vacío
         if df.empty:
-            print(f"⚠️ El archivo está vacío.")
+            print("⚠️ El archivo está vacío.")
             return
 
         df.rename(
             columns={
                 "Fecha": "fecha",
-                "Proveedor": "beneficiario",
+                "Proveedor": "nombre_completo",
                 "Sellos": "sellos",
                 "Seguro": "seguro",
                 "Tipo": "tipo",

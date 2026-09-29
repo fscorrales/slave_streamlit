@@ -2,6 +2,8 @@
 
 from datetime import datetime
 from enum import Enum
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -24,9 +26,10 @@ class PublicStoredUser(BaseModel):
 class FactureroReport(BaseModel):
     """Modelo de datos para reporte de factureros."""
 
-    cuit: str
-    nombre: str
-    estructura: str
+    cuit: Optional[str] = None
+    nombre_completo: str
+    actividad: str
+    partida: str
 
 
 class HonorarioReport(BaseModel):
