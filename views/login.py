@@ -2,10 +2,13 @@
 
 import streamlit as st
 
-from services.auth_service import get_current_user, login, register
 import utils.exceptions as ex
+from services.auth_service import get_current_user, login, register
+from utils.context import set_token
+from views import cached_get_precarizados
 
 
+# --------------------------------------------------
 def render_login() -> None:
     """Renderiza el formulario de login y registro de forma compacta y centrada."""
     # Ocultar la barra lateral completamente durante la pantalla de login
@@ -45,6 +48,7 @@ def render_login() -> None:
                                 token = login(username, password)
 
                             st.session_state["token"] = token
+                            set_token(token)  # Propagar al contexto de servicios
 
                             with st.spinner("Cargando perfil de usuario..."):
                                 user_data = get_current_user(token)
@@ -55,6 +59,23 @@ def render_login() -> None:
                                 "id": user_data.id,
                             }
 
+                            with st.status(
+                                "Preparando ICARO...", expanded=True
+                            ) as status:
+                                st.write("Sincronizando Precarizados...")
+                                if (
+                                    "precarizados_uploader_iteration"
+                                    not in st.session_state
+                                ):
+                                    st.session_state.precarizados_uploader_iteration = 0
+                                cached_get_precarizados(
+                                    update_trigger=st.session_state.precarizados_uploader_iteration
+                                )
+                                status.update(
+                                    label="Sincronización Completa",
+                                    state="complete",
+                                    expanded=False,
+                                )
                             st.rerun()
 
                         except ex.AuthenticationError as exc:

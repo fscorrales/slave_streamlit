@@ -9,6 +9,7 @@ import time
 
 import streamlit as st
 
+from utils.context import clear_token, set_token
 from utils.version import get_version
 from views.login import render_login
 
@@ -58,11 +59,26 @@ if st.session_state.app_closing:
 # Inicialización del estado de sesión
 # ──────────────────────────────────────────────
 def initialize_state() -> None:
-    """Inicializa las claves mínimas en session_state."""
+    """
+    Inicializa las claves mínimas en ``session_state`` y sincroniza el
+    token con el contexto de servicios.
+
+    El contexto (``utils.context``) es leído por los servicios
+    (``services/api_slave.py``) como fallback cuando el caller no les
+    pasa el token explícitamente. Esto evita tener que "threading" el
+    token a través de cada llamada.
+    """
     if "token" not in st.session_state:
         st.session_state["token"] = None
     if "user" not in st.session_state:
         st.session_state["user"] = None
+
+    # Propagar el token de session_state al contexto de servicios
+    current_token = st.session_state.get("token")
+    if current_token:
+        set_token(current_token)
+    else:
+        clear_token()
 
 
 # ──────────────────────────────────────────────
@@ -105,6 +121,7 @@ def build_navigation() -> None:
             st.session_state.app_closing = True
             st.session_state["token"] = None
             st.session_state["user"] = None
+            clear_token()  # Limpiar también el contexto de servicios
             st.rerun()
 
         with st.container():
