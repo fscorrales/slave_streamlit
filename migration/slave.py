@@ -82,15 +82,61 @@ def validate_csv_file(value: Path) -> Path | None:
 # --------------------------------------------------
 class SlaveMongoMigrator:
     # --------------------------------------------------
-    def __init__(self, csv_path: Path, sgf_csv_path: Path | None = None):
+    # Nombres por defecto de los CSV del proyecto. Si el
+    # caller no provee ``csv_path`` al constructor, cada
+    # método de migración elige el suyo a partir de estos
+    # nombres (ver ``_resolve_csv_path``).
+    # --------------------------------------------------
+    DEFAULT_PRECARIZADOS_CSV: str = "slave_precarizados.csv"
+    DEFAULT_HONORARIOS_CSV: str = "slave_honorarios.csv"
+    DEFAULT_SGF_CSV: str = "sgf_proveedores.csv"
+
+    # --------------------------------------------------
+    def __init__(self, csv_path: Path | None = None, sgf_csv_path: Path | None = None):
+        # ``csv_path`` es ahora opcional: si no se provee,
+        # ``migrate_factureros`` usará ``slave_precarizados.csv``
+        # y ``migrate_honorarios`` usará ``slave_honorarios.csv``
+        # (buscándolos en ubicaciones razonables del proyecto).
         self.csv_path = csv_path
-        # Si no se proporciona, asumimos que sgf_proveedores.csv está en el
-        # mismo directorio que el CSV principal.
-        self.sgf_csv_path = (
-            sgf_csv_path
-            if sgf_csv_path is not None
-            else self.csv_path.parent / "sgf_proveedores.csv"
-        )
+        # ``sgf_csv_path`` se conserva como ``None`` o como
+        # ``Path`` provisto por el caller. Si queda en ``None``,
+        # se resuelve dentro de ``migrate_factureros`` a partir
+        # del directorio del CSV principal.
+        self.sgf_csv_path = sgf_csv_path
+
+    # --------------------------------------------------
+    def _resolve_csv_path(self, default_filename: str) -> Path:
+        """
+        Resuelve la ruta del CSV principal a leer.
+
+        Prioridad:
+          1. ``self.csv_path`` explícito (si fue provisto).
+          2. ``migration/<default_filename>`` relativo al
+             directorio actual (caso típico al ejecutar
+             ``python -m migration.slave`` desde la raíz).
+          3. ``<default_filename>`` junto al archivo del
+             módulo (por si se ejecuta desde ``migration/``).
+          4. ``<default_filename>`` en el directorio actual.
+
+        Returns:
+            El primer ``Path`` que exista en el orden de
+            prioridad anterior. Si ninguno existe, devuelve
+            el candidato (2) para que ``pd.read_csv`` emita
+            un ``FileNotFoundError`` explícito con la ruta
+            esperada.
+        """
+        if self.csv_path is not None:
+            return self.csv_path
+
+        candidates: list[Path] = [
+            Path("migration") / default_filename,
+            Path(__file__).resolve().parent / default_filename,
+            Path.cwd() / default_filename,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0]
 
     # --------------------------------------------------
     def migrate_df_to_mongodb(
@@ -210,7 +256,15 @@ class SlaveMongoMigrator:
     # --------------------------------------------------
     def migrate_factureros(self):
         """Migrate FACTUREROS table to MongoDB."""
-        df = pd.read_csv(self.csv_path, encoding="utf-8")
+        csv_path = self._resolve_csv_path(self.DEFAULT_PRECARIZADOS_CSV)
+        # Si el caller no proveyó ``sgf_csv_path``, lo ubicamos
+        # junto al CSV principal (mismo directorio).
+        sgf_csv_path: Path = (
+            self.sgf_csv_path
+            if self.sgf_csv_path is not None
+            else csv_path.parent / self.DEFAULT_SGF_CSV
+        )
+        df = pd.read_csv(csv_path, encoding="utf-8")
         table = "PRECARIZADOS"
 
         # Validación defensiva por si la lectura devolvió un DataFrame vacío
@@ -241,15 +295,15 @@ class SlaveMongoMigrator:
         # ``[LP]``, en mayúsculas y con espacios colapsados) que
         # permite emparejar variaciones del mismo agente.
         # ----------------------------------------------------------
-        if not self.sgf_csv_path.exists():
+        if not sgf_csv_path.exists():
             print(
                 f"⚠️ No se encontró el archivo de proveedores SGF en "
-                f"'{self.sgf_csv_path}'. Se omite el enriquecimiento con CUIT."
+                f"'{sgf_csv_path}'. Se omite el enriquecimiento con CUIT."
             )
             df["cuit"] = pd.NA
         else:
             df_sgf = pd.read_csv(
-                self.sgf_csv_path,
+                sgf_csv_path,
                 encoding="latin-1",
                 header=None,
                 skiprows=1,
@@ -306,7 +360,8 @@ class SlaveMongoMigrator:
     def migrate_honorarios(self):
         """Migrate HONORARIOS Facturareros table to MongoDB."""
         table = "LIQUIDACIONHONORARIOS"
-        df = pd.read_csv(self.csv_path, encoding="ISO-8859-1", dtype=str)
+        csv_path = self._resolve_csv_path(self.DEFAULT_HONORARIOS_CSV)
+        df = pd.read_csv(csv_path, encoding="ISO-8859-1", dtype=str)
 
         # Validación defensiva por si la lectura devolvió un DataFrame vacío
         if df.empty:
@@ -482,8 +537,8 @@ def main(
         migrator = SlaveMongoMigrator(
             csv_path=file,
         )
-        # migrator.migrate_factureros()
-        migrator.migrate_honorarios()
+        migrator.migrate_factureros()
+        # migrator.migrate_honorarios()
         # typer.secho(
         #     f"[OK] Migracion completada con exito desde {file.name}.",
         #     fg=typer.colors.GREEN,
