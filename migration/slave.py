@@ -17,8 +17,10 @@ import pandas as pd
 import typer
 
 from migration.migration_client import MigrationClient
+from services.api_slave import fetch_factureros
 from utils import print_rich_table
 from utils.endpoints import Endpoints
+from utils.exceptions import APIConnectionError, APIResponseError
 
 
 # --------------------------------------------------
@@ -134,6 +136,78 @@ class SlaveMongoMigrator:
             print(f"Error migrar el DataFrame a MongoDB: {e}")
 
     # --------------------------------------------------
+    def _fetch_factureros_from_api(self) -> pd.DataFrame:
+        """
+        Descarga el padrón de factureros desde la API de Koyeb
+        (``/slave/factureros``) y lo retorna como ``pd.DataFrame``.
+
+        Se autentica con ``MigrationClient`` (credenciales de admin
+        del ``.env``) para obtener un token y delega la petición
+        HTTP en ``services.api_slave.fetch_factureros``, respetando
+        la separación de responsabilidades definida en
+        ``AGENTS.md``.
+
+        Returns:
+            DataFrame con al menos las columnas ``nombre_completo``
+            y ``cuit``. Vacío si la API no retornó datos o si
+            ocurrió un error (en cuyo caso se imprime el motivo por
+            consola para no silenciar la falla).
+        """
+        migration_client = MigrationClient()
+        try:
+            migration_client.login()
+        except Exception as exc:
+            print(
+                f"[ERROR] No se pudo autenticar con la API para "
+                f"obtener el padrón de factureros: {exc}"
+            )
+            return pd.DataFrame()
+
+        try:
+            response = fetch_factureros(token=migration_client.token)
+        except APIConnectionError as exc:
+            print(
+                f"[ERROR] Error de conexión al obtener el padrón de "
+                f"factureros desde la API: {exc}"
+            )
+            return pd.DataFrame()
+        except APIResponseError as exc:
+            print(
+                f"[ERROR] Error de respuesta de la API al obtener el "
+                f"padrón de factureros: {exc}"
+            )
+            return pd.DataFrame()
+
+        # La API puede devolver una lista directa o un ``dict`` con
+        # alguna clave que contenga la lista. Normalizamos ambos
+        # casos para no acoplar el migrador a una forma puntual.
+        if isinstance(response, list):
+            data = response
+        elif isinstance(response, dict):
+            data = (
+                response.get("data")
+                or response.get("items")
+                or response.get("factureros")
+                or []
+            )
+        else:
+            data = []
+
+        if not data:
+            print("⚠️ La API no devolvió registros en /slave/factureros.")
+            return pd.DataFrame()
+
+        df_api = pd.DataFrame(data)
+        if "nombre_completo" not in df_api.columns or "cuit" not in df_api.columns:
+            print(
+                "[ERROR] La respuesta de /slave/factureros no contiene "
+                "las columnas 'nombre_completo' y 'cuit' esperadas."
+            )
+            return pd.DataFrame()
+
+        return df_api
+
+    # --------------------------------------------------
     def migrate_factureros(self):
         """Migrate FACTUREROS table to MongoDB."""
         df = pd.read_csv(self.csv_path, encoding="utf-8")
@@ -232,7 +306,7 @@ class SlaveMongoMigrator:
     def migrate_honorarios(self):
         """Migrate HONORARIOS Facturareros table to MongoDB."""
         table = "LIQUIDACIONHONORARIOS"
-        df = pd.read_csv(self.csv_path, encoding="utf-8")
+        df = pd.read_csv(self.csv_path, encoding="ISO-8859-1", dtype=str)
 
         # Validación defensiva por si la lectura devolvió un DataFrame vacío
         if df.empty:
@@ -259,6 +333,10 @@ class SlaveMongoMigrator:
             inplace=True,
         )
 
+        # print(df.head())
+        # print(df.info())
+
+        df["fecha"] = pd.to_datetime(df["fecha"], format="%m/%d/%y %H:%M:%S")
         # df["fecha"] = pd.to_timedelta(df["fecha"], unit="D") + pd.Timestamp(
         #     "1970-01-01"
         # )
@@ -291,6 +369,68 @@ class SlaveMongoMigrator:
         #         "embargo",
         #     ],
         # ]
+
+        # ----------------------------------------------------------
+        # Enriquecer el DataFrame con el CUIT proveniente del padrón
+        # de factureros disponible en la API
+        # (``https://...koyeb.app/slave/factureros``). Se hace un
+        # merge por ``nombre_completo`` usando una clave
+        # normalizada para emparejar variaciones del mismo agente
+        # (con/sin coma, con prefijos como ``(JUBILADO)`` /
+        # ``[LP]``, mayúsculas/minúsculas distintas, etc.).
+        # ----------------------------------------------------------
+        df_factureros = self._fetch_factureros_from_api()
+        if df_factureros.empty:
+            print(
+                "⚠️ No se obtuvo el padrón de factureros desde la API. "
+                "Se omite el enriquecimiento con CUIT."
+            )
+            df["cuit"] = pd.NA
+        else:
+            # Seleccionamos únicamente las columnas necesarias y
+            # construimos una clave de match normalizada.
+            df_lookup = df_factureros[["nombre_completo", "cuit"]].copy()
+            df_lookup["_match_key"] = df_lookup["nombre_completo"].apply(
+                _normalize_name_for_match
+            )
+            # Conservamos sólo el primer CUIT por clave para evitar
+            # duplicados al hacer merge.
+            df_lookup = df_lookup.drop_duplicates(subset=["_match_key"])
+
+            df["_match_key"] = df["nombre_completo"].apply(_normalize_name_for_match)
+
+            # Merge left para no perder filas del archivo principal
+            # cuando no haya coincidencia en el padrón.
+            df = df.merge(
+                df_lookup[["_match_key", "cuit"]],
+                on="_match_key",
+                how="left",
+            )
+            df = df.drop(columns=["_match_key"])
+            # Elimina guiones respetando los nulos (sin aplicar
+            # ``.astype(str)`` a todo el DataFrame).
+            df["cuit"] = df["cuit"].str.replace("-", "", regex=False)
+
+        # ----------------------------------------------------------
+        # Reporte del porcentaje de comprobantes con CUIT.
+        # ----------------------------------------------------------
+        total_comprobantes: int = len(df)
+        comprobantes_con_cuit: int = int(df["cuit"].notna().sum())
+        comprobantes_sin_cuit: int = total_comprobantes - comprobantes_con_cuit
+        porcentaje_cuit: float = (
+            (comprobantes_con_cuit / total_comprobantes) * 100.0
+            if total_comprobantes > 0
+            else 0.0
+        )
+        print(
+            f"📊 Porcentaje de comprobantes con CUIT: {porcentaje_cuit:.2f}% "
+            f"({comprobantes_con_cuit}/{total_comprobantes})"
+        )
+        if comprobantes_sin_cuit > 0:
+            print(
+                f"⚠️ {comprobantes_sin_cuit} comprobante(s) quedaron sin CUIT "
+                f"y se enviarán como null a MongoDB."
+            )
 
         df["updated_at"] = pd.Timestamp.now()
 
@@ -342,12 +482,12 @@ def main(
         migrator = SlaveMongoMigrator(
             csv_path=file,
         )
-        migrator.migrate_factureros()
-        # migrator.migrate_honorarios()
-        typer.secho(
-            f"[OK] Migracion completada con exito desde {file.name}.",
-            fg=typer.colors.GREEN,
-        )
+        # migrator.migrate_factureros()
+        migrator.migrate_honorarios()
+        # typer.secho(
+        #     f"[OK] Migracion completada con exito desde {file.name}.",
+        #     fg=typer.colors.GREEN,
+        # )
     except Exception as e:
         typer.secho(
             f"[ERROR] Error durante la ejecucion: {e}", fg=typer.colors.RED, err=True
