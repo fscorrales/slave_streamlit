@@ -10,15 +10,12 @@
 import inspect
 import os
 import sys
-from pathlib import Path
 
 
 # --------------------------------------------------
 def get_utils_path() -> str:
     """Retorna la ruta absoluta del directorio ``utils/``."""
-    return os.path.dirname(
-        os.path.abspath(inspect.getfile(inspect.currentframe()))
-    )
+    return os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 
 
 # --------------------------------------------------
@@ -34,8 +31,8 @@ def get_app_path() -> str:
         # Estamos en el .exe: la ruta base es donde está el archivo ejecutable
         return os.path.dirname(sys.executable)
     # Modo desarrollo: subir un nivel desde utils/
-    dir_actual: Path = Path(__file__).resolve()
-    return str(dir_actual.parent)
+    dir_actual = os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(dir_actual)
 
 
 # --------------------------------------------------
@@ -69,3 +66,24 @@ def get_secure_cache_path() -> str:
 def get_download_path() -> str:
     """Retorna la ruta de la carpeta ``Reportes Descargados``."""
     return os.path.join(get_app_path(), "Reportes Descargados")
+
+
+# --------------------------------------------------
+def main():
+    """Make a jazz noise here"""
+
+    print(f"Utils Path: {get_utils_path()}")
+    print(f"App Path: {get_app_path()}")
+    print(f"Outside Path: {get_outside_path()}")
+    print(f"Cache Path: {get_cache_path()}")
+    print(f"Secure Cache Path: {get_secure_cache_path()}")
+    print(f"Download Path: {get_download_path()}")
+
+
+# --------------------------------------------------
+if __name__ == "__main__":
+    main()
+
+    # From /invicofapy
+
+    # poetry run python -m utils.handling_path
