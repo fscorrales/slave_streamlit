@@ -293,7 +293,9 @@ def modal_precarizado(
                     "cuit": cuit_limpio or None,
                     "actividad": actividad_limpia,
                     "partida": partida_limpia,
-                    "updated_at": datetime.now(timezone.utc),
+                    "updated_at": form_data.get(
+                        "updated_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    ),
                 }
 
                 with st.spinner("Guardando agente..."):
