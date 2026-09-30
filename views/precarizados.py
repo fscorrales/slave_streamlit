@@ -3,6 +3,7 @@ Author: Fernando Corrales <fscpython@gmail.com>
 Purpose: Slave's Precarizados Page
 """
 
+from datetime import datetime
 from typing import Any
 
 import pandas as pd
@@ -11,10 +12,7 @@ import streamlit as st
 import utils.exceptions as ex
 from services.data_fetcher import get_precarizados
 from utils.endpoints import Endpoints
-from views import (
-    dataframe_with_buttons,
-    report_template,
-)
+from views import dataframe_with_buttons, modal_delete_registro_gral, report_template
 
 REPORTE = "precarizados"
 
@@ -68,9 +66,7 @@ def add_precarizado() -> None:
     disparar la acción "agregar" desde la grilla. La implementación
     real debe reutilizar el componente modal correspondiente.
     """
-    raise NotImplementedError(
-        "TODO: implementar modal de alta de precarizados"
-    )
+    raise NotImplementedError("TODO: implementar modal de alta de precarizados")
 
 
 # --------------------------------------------------
@@ -81,21 +77,16 @@ def edit_precarizado(datos_edicion: dict[str, Any]) -> None:
     Args:
         datos_edicion: Fila seleccionada del DataFrame.
     """
-    raise NotImplementedError(
-        "TODO: implementar modal de edición de precarizados"
-    )
+    raise NotImplementedError("TODO: implementar modal de edición de precarizados")
 
 
 # --------------------------------------------------
 def delete_precarizado(datos_eliminar: dict[str, Any]) -> None:
-    """
-    TODO: Abre un modal de confirmación y elimina el precarizado.
-
-    Args:
-        datos_eliminar: Fila seleccionada del DataFrame.
-    """
-    raise NotImplementedError(
-        "TODO: implementar modal de eliminación de precarizados"
+    modal_delete_registro_gral(
+        endpoint=f"{Endpoints.SLAVE_FACTUREROS.value}/delete_one/{datos_eliminar['id']}",
+        desc_registro=datos_eliminar["nombre_completo"],
+        session_state_update_key="precarizados_uploader_iteration",
+        key_prefix=f"delete_precarizados_{datetime.now().strftime('%Y%m%d%H%M%S')}",
     )
 
 
@@ -110,9 +101,7 @@ def render() -> None:
     )
 
     # Capturamos el filtro del session_state (que el fragmento actualizó)
-    filtro_actual: str = st.session_state.get(
-        f"{REPORTE}_advanced_filter", ""
-    )
+    filtro_actual: str = st.session_state.get(f"{REPORTE}_advanced_filter", "")
     trigger: int = st.session_state.get("precarizados_uploader_iteration", 0)
 
     # Ejecutamos la lógica que necesitemos usando el wrapper cacheado
