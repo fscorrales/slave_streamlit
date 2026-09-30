@@ -12,9 +12,17 @@ provee explícitamente.
 
 Es el equivalente "thread-local" moderno de Python, nativo (``contextvars``)
 y libre de dependencias externas.
+
+Importante sobre Streamlit y ``ContextVar``:
+    ``ContextVar`` NO se propaga automáticamente a través de los límites
+    de ejecución de ``@st.dialog`` ni ``@st.fragment``: Streamlit crea un
+    contexto de script independiente para cada uno, por lo que el token
+    seteado en el script principal aparece como ``None`` dentro del
+    diálogo/fragmento si no se vuelve a sincronizar explícitamente.
+    Por eso se ofrece ``sync_session_token()``.
 """
 
-__all__ = ["set_token", "get_token", "clear_token"]
+__all__ = ["set_token", "get_token", "clear_token", "sync_session_token"]
 
 from contextvars import ContextVar
 from typing import Optional
@@ -56,3 +64,30 @@ def clear_token() -> None:
     Limpia el token del contexto actual (e.g. al hacer logout).
     """
     _current_token.set(None)
+
+
+# --------------------------------------------------
+def sync_session_token(token: Optional[str]) -> Optional[str]:
+    """
+    Sincroniza el token del ``st.session_state`` al ``ContextVar`` actual
+    y lo retorna, listo para pasarlo a un servicio.
+
+    Helper de defensa para ser invocado al inicio de ``@st.dialog`` y
+    ``@st.fragment``, donde Streamlit no propaga los ``ContextVar``
+    automáticamente. Centraliza la política "si hay token, setealo; si
+    no, limpialo" en una sola función para evitar inconsistencias.
+
+    Args:
+        token: Token leído de ``st.session_state`` (puede ser ``None``).
+
+    Returns:
+        El mismo ``token`` recibido, para encadenar::
+        
+            token = sync_session_token(st.session_state.get("token"))
+            delete_request(endpoint, token=token)
+    """
+    if token:
+        set_token(token)
+    else:
+        clear_token()
+    return token

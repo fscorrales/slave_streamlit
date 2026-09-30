@@ -21,8 +21,11 @@ def _get_headers(token: Optional[str] = None) -> dict[str, str]:
 
     Resolución del token (en orden de prioridad):
 
-        1. ``token`` explícito pasado por el caller.
-        2. ``utils.context.get_token()`` (seteado por la UI en cada rerun).
+        1. ``token`` explícito pasado por el caller (preferido; robusto
+           frente a ``@st.dialog``/``@st.fragment`` que no propagan
+           ``ContextVar``).
+        2. ``utils.context.get_token()`` (seteado por la UI en cada rerun
+           del script principal; fallback cuando el caller no lo provee).
         3. Error: ``APIConnectionError``.
 
     Este patrón permite que los servicios lean el token sin importar

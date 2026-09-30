@@ -19,6 +19,7 @@ from components.buttons import (
 from components.dataframes import dataframe
 from components.text_inputs import text_input_advance_filter
 from services.api_slave import fetch_excel_stream, post_request
+from utils.context import sync_session_token
 
 
 # --------------------------------------------------
@@ -63,6 +64,12 @@ def report_template(
     Vista reutilizable.
     filters_config: Lista de dicts con ['label', 'options', 'key', 'default']
     """
+    # CRÍTICO: Streamlit ejecuta ``@st.fragment`` en un contexto de script
+    # separado donde los ``ContextVar`` (token) NO se heredan del script
+    # principal. Sin esta sincronización, ``post_request`` (línea más abajo)
+    # fallaría con ``APIConnectionError("No hay token de sesión...")``.
+    token = sync_session_token(st.session_state.get("token"))
+
     st.markdown(f"# {title}")
     st.write(description)
 
@@ -150,7 +157,7 @@ def report_template(
                         # Transformación final para Mongo
                         registros = df.to_dict(orient="records")
 
-                        res = post_request(endpoint, registros)
+                        res = post_request(endpoint, registros, token=token)
 
                         if res:
                             # 1. Extraer datos principales
