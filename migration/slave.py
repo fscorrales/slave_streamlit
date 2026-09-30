@@ -350,6 +350,7 @@ class SlaveMongoMigrator:
 
         df["partida"] = df["partida"].astype(str)
         df = df.drop_duplicates()
+        df["updated_at"] = pd.Timestamp.now()
         print_rich_table(df, title=f"Tabla {table} Exportada")
 
         self.migrate_df_to_mongodb(

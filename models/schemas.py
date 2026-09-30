@@ -1,10 +1,10 @@
 """Modelos Pydantic para el sistema INVICO Slave."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Role(str, Enum):
@@ -30,6 +30,7 @@ class FactureroReport(BaseModel):
     nombre_completo: str
     actividad: str
     partida: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class HonorarioReport(BaseModel):
@@ -54,3 +55,4 @@ class HonorarioReport(BaseModel):
     descuento: float
     mutual: float
     embargo: float
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
