@@ -553,5 +553,6 @@ def main(
 # --------------------------------------------------
 if __name__ == "__main__":
     app()
+    # poetry run python -m migration.slave
     # poetry run python -m migration.slave -f "D:\Datos INVICO\IT\slave_streamlit\migration\slave_precarizados.csv"
     # poetry run python -m migration.slave -f "D:\Datos INVICO\IT\slave_streamlit\migration\slave_honorarios.csv"

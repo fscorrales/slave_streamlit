@@ -12,7 +12,12 @@ import streamlit as st
 import utils.exceptions as ex
 from services.data_fetcher import get_precarizados
 from utils.endpoints import Endpoints
-from views import dataframe_with_buttons, modal_delete_registro_gral, report_template
+from views import (
+    dataframe_with_buttons,
+    modal_delete_registro_gral,
+    modal_precarizado,
+    report_template,
+)
 
 REPORTE = "precarizados"
 
@@ -59,25 +64,20 @@ def cached_get_precarizados(
 
 # --------------------------------------------------
 def add_precarizado() -> None:
-    """
-    TODO: Abre un modal/diálogo para crear un nuevo precarizado.
-
-    Stub mantenido porque ``dataframe_with_buttons`` lo invoca al
-    disparar la acción "agregar" desde la grilla. La implementación
-    real debe reutilizar el componente modal correspondiente.
-    """
-    raise NotImplementedError("TODO: implementar modal de alta de precarizados")
+    # Microsegundos: evita que dos aperturas en el mismo segundo compartan
+    # el estado de los widgets del formulario (las keys derivan del prefijo).
+    modal_precarizado(
+        key_prefix=f"add_precarizado_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+    )
 
 
 # --------------------------------------------------
 def edit_precarizado(datos_edicion: dict[str, Any]) -> None:
-    """
-    TODO: Abre un modal con los datos recibidos para editar un precarizado.
-
-    Args:
-        datos_edicion: Fila seleccionada del DataFrame.
-    """
-    raise NotImplementedError("TODO: implementar modal de edición de precarizados")
+    modal_precarizado(
+        key_prefix=f"edit_precarizado_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
+        datos_carga=datos_edicion,
+        es_edicion=True,
+    )
 
 
 # --------------------------------------------------
