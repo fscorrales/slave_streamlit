@@ -392,6 +392,7 @@ class SlaveMongoMigrator:
         # print(df.head())
         # print(df.info())
 
+        df["actividad"] = df["actividad"].str[:3] + "00-" + df["actividad"].str[3:]
         df["fecha"] = pd.to_datetime(df["fecha"], format="%m/%d/%y %H:%M:%S")
         # df["fecha"] = pd.to_timedelta(df["fecha"], unit="D") + pd.Timestamp(
         #     "1970-01-01"
@@ -402,29 +403,6 @@ class SlaveMongoMigrator:
         df["embargo"] = 0
         keep = ["NoSIIF"]
         df = df.loc[~df.nro_comprobante.str.contains("|".join(keep))]
-
-        # df = df.loc[
-        #     :,
-        #     [
-        #         "ejercicio",
-        #         "mes",
-        #         "fecha",
-        #         "nro_comprobante",
-        #         "tipo",
-        #         "beneficiario",
-        #         "actividad",
-        #         "partida",
-        #         "importe_bruto",
-        #         "iibb",
-        #         "lp",
-        #         "sellos",
-        #         "seguro",
-        #         "anticipo",
-        #         "descuento",
-        #         "mutual",
-        #         "embargo",
-        #     ],
-        # ]
 
         # ----------------------------------------------------------
         # Enriquecer el DataFrame con el CUIT proveniente del padrón
@@ -538,8 +516,8 @@ def main(
         migrator = SlaveMongoMigrator(
             csv_path=file,
         )
-        migrator.migrate_factureros()
-        # migrator.migrate_honorarios()
+        # migrator.migrate_factureros()
+        migrator.migrate_honorarios()
         # typer.secho(
         #     f"[OK] Migracion completada con exito desde {file.name}.",
         #     fg=typer.colors.GREEN,
