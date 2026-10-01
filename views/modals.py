@@ -10,7 +10,7 @@ import streamlit as st
 
 from components.buttons import button_cancel, button_submit
 from services.api_slave import delete_request, post_request, put_request
-from services.data_fetcher import get_precarizados
+from services.data_fetcher import get_referencias_factureros
 from utils.context import sync_session_token
 from utils.endpoints import Endpoints
 from utils.exceptions import AppBaseException
@@ -94,43 +94,11 @@ def _a_texto(valor: Any) -> str:
         return valor
     if pd.isna(valor):  # numpy.nan, pd.NA, pd.NaT
         return ""
+    if isinstance(valor, float) and valor.is_integer():
+        # Float entero (p.ej. 354.0): pierde la parte decimal para
+        # coincidir con el valor canónico "354" de las referencias.
+        return str(int(valor))
     return str(valor)
-
-
-# --------------------------------------------------
-@st.cache_data(ttl=3600, show_spinner=False)
-def _referencias_factureros(update_trigger: int = 0) -> tuple[list[str], list[str]]:
-    """
-    Retorna las listas únicas y ordenadas de ``actividad`` y ``partida``
-    del padrón de factureros, para poblar los ``selectbox`` del modal.
-
-    Se sirve de ``services.data_fetcher.get_precarizados`` (con su
-    fallback a Parquet) envuelto en ``st.cache_data`` para no repetir
-    la llamada en cada re-render del diálogo.
-
-    **Por qué vive en ``views/`` y no en ``services/``:** igual que
-    ``cached_get_precarizados``, ``@st.cache_data`` es un concepto de
-    runtime de Streamlit y ``AGENTS.md`` prohíbe importar ``streamlit``
-    en ``services/``/``models/``.
-
-    Args:
-        update_trigger: Incrementar para invalidar el caché. Se usa
-            ``st.session_state[session_state_update_key]``.
-
-    Returns:
-        Tupla ``(actividades, partidas)``; ambas vacías si el padrón
-        está vacío.
-
-    Raises:
-        APIConnectionError: Propaga desde el servicio si no hay fallback.
-        APIResponseError: Propaga desde el servicio si no hay fallback.
-    """
-    df = get_precarizados(update_trigger=update_trigger)
-    if df.empty:
-        return [], []
-    actividades = sorted({_a_texto(v) for v in df.get("actividad", [])} - {""})
-    partidas = sorted({_a_texto(v) for v in df.get("partida", [])} - {""})
-    return actividades, partidas
 
 
 # --- MODAL: AGREGAR / EDITAR FACTURERO (AGENTE) ---
@@ -177,7 +145,7 @@ def modal_precarizado(
     # Referencias del padrón para los selectbox de actividad/partida.
     update_trigger = int(st.session_state.get(session_state_update_key, 0))
     try:
-        actividades, partidas = _referencias_factureros(update_trigger)
+        actividades, partidas = get_referencias_factureros(update_trigger)
     except AppBaseException as exc:
         # No silenciamos: informamos y dejamos los selectbox en modo
         # escritura libre (accept_new_options=True) como fallback.

@@ -1,14 +1,17 @@
 """Servicio de fetching de datos para la UI.
 
-Este módulo es **puro**: no importa ``streamlit`` y no aplica cachés de
-UI. El decorador ``@st.cache_data`` se aplica en la capa de ``views/``
-(véase ``views.precarizados.cached_get_precarizados``).
+Aplica ``@st.cache_data`` directamente sobre las funciones de servicio
+(tal como autoriza ``AGENTS.md`` §1: *"Se autoriza el uso de
+``@st.cache_data`` / ``@st.cache_resource`` para optimizar peticiones"*),
+de modo que la capa de ``views/`` no necesita wrappers intermedios.
 
 Mantiene un fallback a caché Parquet local cuando la API no está
-disponible (modo degradado).
+disponible (modo degradado) y **no** contiene widgets interactivos de
+entrada de datos (``st.button``, ``st.text_input``, ``st.file_uploader``),
+los cuales pertenecen a la capa de UI (``AGENTS.md`` §1).
 """
 
-__all__ = ["get_precarizados"]
+__all__ = ["get_precarizados", "get_referencias_factureros"]
 
 import logging
 import os
@@ -16,6 +19,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import pandas as pd
+import streamlit as st
 
 import utils.exceptions as ex
 from services.api_slave import fetch_dataframe
@@ -26,6 +30,64 @@ logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------
+def _valores_unicos(df: pd.DataFrame, columna: str) -> list[str]:
+    """
+    Extrae los valores únicos y ordenados de una columna del DataFrame.
+
+    Descarta nulos (``NaN``/``NA``/``NaT``), normaliza a ``str`` con
+    ``strip()`` y elimina cadenas vacías.
+
+    Args:
+        df: DataFrame fuente.
+        columna: Nombre de la columna a extraer.
+
+    Returns:
+        Lista ordenada de valores únicos; vacía si la columna no existe
+        o no tiene valores utilizables.
+    """
+    if columna not in df.columns:
+        return []
+    serie = df[columna].dropna()
+    valores: set[str] = set()
+    for valor in serie:
+        # Un float entero (p.ej. 354.0 al tener la columna nulos) pierde
+        # la parte decimal para coincidir con el valor canónico "354".
+        if isinstance(valor, float) and valor.is_integer():
+            valores.add(str(int(valor)))
+        else:
+            valores.add(str(valor).strip())
+    return sorted(valores - {""})
+
+
+# --------------------------------------------------
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_referencias_factureros(update_trigger: int = 0) -> tuple[list[str], list[str]]:
+    """
+    Retorna las listas únicas y ordenadas de ``actividad`` y ``partida``
+    del padrón de factureros, para poblar los ``selectbox`` de los modales.
+
+    El ``@st.cache_data`` evita re-ejecutar la transformación en cada
+    re-render del diálogo; internamente delega en :func:`get_precarizados`
+    (que trae su propio caché y fallback a Parquet).
+
+    Args:
+        update_trigger: Incrementar para invalidar el caché. Se usa
+            ``st.session_state[session_state_update_key]``.
+
+    Returns:
+        Tupla ``(actividades, partidas)``; ambas vacías si el padrón
+        está vacío.
+
+    Raises:
+        APIConnectionError: Si la API falla y no hay caché disponible.
+        APIResponseError: Si la API retorna un error y no hay caché.
+    """
+    df = get_precarizados(update_trigger=update_trigger)
+    return _valores_unicos(df, "actividad"), _valores_unicos(df, "partida")
+
+
+# --------------------------------------------------
+@st.cache_data(ttl=3600)
 def get_precarizados(
     filtro_avanzado: str = "",
     update_trigger: int = 0,
@@ -43,6 +105,11 @@ def get_precarizados(
         3. Si la API falla y existe un caché (cualquier antigüedad), se
            usa como fallback silencioso.
         4. Si la API falla y no hay caché, se re-lanza la excepción.
+
+    El ``@st.cache_data`` (TTL de 1 hora) agrega una capa de caché en
+    memoria por encima de la lógica anterior, evitando llamadas repetidas
+    a la API dentro del mismo TTL. Las excepciones no se cachean: se
+    re-lanzan en cada invocación para que la UI pueda notificarlas.
 
     Args:
         filtro_avanzado: Filtro dinámico (e.g. ``ejercicio=2024``).

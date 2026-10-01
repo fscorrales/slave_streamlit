@@ -1,9 +1,10 @@
 # AGENT RULES: Estándares de Calidad y Arquitectura
 
 ## 1. Separación Estricta de Responsabilidades (SoC)
-- **Módulos de UI (Streamlit):** Los archivos dentro de `components/`, `pages/` y `app.py` se limitarán EXCLUSIVAMENTE a la renderización de componentes visuales, captura de eventos y gestión de estado (`st.session_state`)[cite: 1].
-- **Módulos de Servicio (`services/`):** La comunicación HTTP con la API en Koyeb debe residir en `services/api_slave.py`[cite: 1]. Queda **estrictamente prohibido** importar `streamlit` en la carpeta `services/` o `models/`.
-- **Módulos de Modelos (`models/`):** Los modelos de datos Pydantic deberán estar aislados en `models/schemas.py`[cite: 1].
+- **Módulos de Datos (`models/schemas.py`):** Pura definición de Pydantic. No importan Streamlit ni HTTPX.
+- **Módulos de Servicio (`services/api_slave.py`):** Contienen las llamadas HTTP con `httpx.Client`[cite: 1]. 
+  - **Permitido:** Se autoriza el uso de `@st.cache_data` / `@st.cache_resource` para optimizar peticiones y `st.error()` / `st.toast()` para notificar fallos de red directamente al usuario de forma amigable.
+  - **Restricción:** No deben contener widgets interactivos de entrada de datos (como `st.button`, `st.text_input` o `st.file_uploader`), los cuales pertenecen exclusivamente a los archivos de UI (`app.py` o `components/`)[cite: 1].
 
 ## 2. Estilo de Código Python (PEP 8)
 - **Formateo:** Cumplimiento estricto de PEP 8. Usar exactamente 4 espacios por nivel de sangría.

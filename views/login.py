@@ -4,8 +4,8 @@ import streamlit as st
 
 import utils.exceptions as ex
 from services.auth_service import get_current_user, login, register
+from services.data_fetcher import get_precarizados
 from utils.context import set_token
-from views import cached_get_precarizados
 
 
 # --------------------------------------------------
@@ -68,7 +68,7 @@ def render_login() -> None:
                                     not in st.session_state
                                 ):
                                     st.session_state.precarizados_uploader_iteration = 0
-                                cached_get_precarizados(
+                                get_precarizados(
                                     update_trigger=st.session_state.precarizados_uploader_iteration
                                 )
                                 status.update(

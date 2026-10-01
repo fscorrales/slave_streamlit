@@ -23,46 +23,6 @@ REPORTE = "precarizados"
 
 
 # --------------------------------------------------
-@st.cache_data(ttl=3600)
-def cached_get_precarizados(
-    filtro_avanzado: str = "", update_trigger: int = 0
-) -> pd.DataFrame:
-    """
-    Wrapper cacheado de :func:`services.data_fetcher.get_precarizados`
-    con TTL de 1 hora.
-
-    **Por qué está definido aquí y no en ``services/``:**
-
-    El decorador ``@st.cache_data`` es un concepto de runtime de Streamlit
-    (gestión de caché en memoria, hashing del qualified name de la función,
-    TTL). Para cumplir la separación de responsabilidades definida en
-    ``AGENTS.md`` (cero imports de ``streamlit`` en ``services/`` y
-    ``models/``), la función cacheada se expone en la capa de ``views/``
-    y simplemente envuelve al servicio puro.
-
-    La función de servicio (``get_precarizados``) sigue aplicando su
-    propio fallback a Parquet; este wrapper agrega una capa adicional de
-    caché en memoria para evitar llamadas repetidas a la API dentro del
-    mismo TTL.
-
-    Args:
-        filtro_avanzado: Filtro dinámico (e.g. ``ejercicio=2024``).
-        update_trigger: Incrementar para forzar la invalidación del caché.
-
-    Returns:
-        DataFrame con los precarizados.
-
-    Raises:
-        APIConnectionError: Propaga desde el servicio si no hay fallback.
-        APIResponseError: Propaga desde el servicio si no hay fallback.
-    """
-    return get_precarizados(
-        filtro_avanzado=filtro_avanzado,
-        update_trigger=update_trigger,
-    )
-
-
-# --------------------------------------------------
 def add_precarizado() -> None:
     # Microsegundos: evita que dos aperturas en el mismo segundo compartan
     # el estado de los widgets del formulario (las keys derivan del prefijo).
@@ -104,10 +64,11 @@ def render() -> None:
     filtro_actual: str = st.session_state.get(f"{REPORTE}_advanced_filter", "")
     trigger: int = st.session_state.get("precarizados_uploader_iteration", 0)
 
-    # Ejecutamos la lógica que necesitemos usando el wrapper cacheado
+    # Ejecutamos la lógica con el servicio cacheado (@st.cache_data vive
+    # en services/data_fetcher.py desde que AGENTS.md §1 lo autorizó)
     df_precarizados = pd.DataFrame()  # type: ignore  # fallback por defecto
     try:
-        df_precarizados = cached_get_precarizados(
+        df_precarizados = get_precarizados(
             filtro_avanzado=filtro_actual, update_trigger=trigger
         )
         if df_precarizados.empty:
