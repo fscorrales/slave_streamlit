@@ -23,16 +23,20 @@ from utils import (
     APIConnectionError,
     APIResponseError,
     Endpoints,
+    build_retenciones_payload,
     formato_moneda_ar,
 )
-from views import dataframe_with_buttons, params_preparation
+from views import dataframe_with_buttons, modal_delete_registro_gral, params_preparation
 
 REPORTE = "honorarios"
 
 
 # --------------------------------------------------
-def dataframe_home_carga(
-    df_carga: pd.DataFrame, key: str = "df_home_carga", height: int = 200, **kwargs
+def dataframe_honorarios_comprobantes(
+    df_comprobantes: pd.DataFrame,
+    key: str = "df_comprobantes",
+    height: int = 200,
+    **kwargs,
 ):
     with st.container(
         horizontal=False,
@@ -40,87 +44,89 @@ def dataframe_home_carga(
         width="stretch",
     ):
         # 1. Creamos una fila de inputs usando columnas (podés elegir cuáles indexar)
-        df_filtrado = df_carga.copy()
-        col1, col2, col3, col4, col5 = st.columns(5)
+        df_filtrado = (
+            df_comprobantes.groupby(
+                ["ejercicio", "mes", "fecha", "nro_comprobante", "tipo"]
+            )[["importe_bruto"]]
+            .sum()
+            .reset_index()
+        )
+        df_filtrado = df_filtrado.sort_values(
+            by=["fecha", "nro_comprobante"], ascending=False
+        ).reset_index(drop=True)
+        # col1, col2, col3, col4, col5 = st.columns(5)
 
-        with col1:
-            f_id_carga = st.text_input(
-                "Id Carga",
-                placeholder="Ej: 1175",
-                key=f"f_id_carga_{REPORTE}",
-            )
-        with col2:
-            f_cuit = st.text_input(
-                "CUIT",
-                placeholder="Ej: 20632351514",
-                key=f"f_cuit_{REPORTE}",
-            )
-        with col3:
-            f_desc_obra = st.text_input(
-                "Descripción Obra",
-                placeholder="Ej: Museo",
-                key=f"f_desc_obra_{REPORTE}",
-            )
-        with col4:
-            f_actividad = st.text_input(
-                "Actividad",
-                placeholder="Ej: 11-00-02-79",
-                key=f"f_actividad_{REPORTE}",
-            )
-        with col5:
-            f_importe_min = st.number_input(
-                "Importe Mínimo",
-                min_value=0.0,
-                value=0.0,
-                step=10000.0,
-                key=f"f_importe_min_{REPORTE}",
-            )
+        # with col1:
+        #     f_id_carga = st.text_input(
+        #         "Id Carga",
+        #         placeholder="Ej: 1175",
+        #         key=f"f_id_carga_{REPORTE}",
+        #     )
+        # with col2:
+        #     f_cuit = st.text_input(
+        #         "CUIT",
+        #         placeholder="Ej: 20632351514",
+        #         key=f"f_cuit_{REPORTE}",
+        #     )
+        # with col3:
+        #     f_desc_obra = st.text_input(
+        #         "Descripción Obra",
+        #         placeholder="Ej: Museo",
+        #         key=f"f_desc_obra_{REPORTE}",
+        #     )
+        # with col4:
+        #     f_actividad = st.text_input(
+        #         "Actividad",
+        #         placeholder="Ej: 11-00-02-79",
+        #         key=f"f_actividad_{REPORTE}",
+        #     )
+        # with col5:
+        #     f_importe_min = st.number_input(
+        #         "Importe Mínimo",
+        #         min_value=0.0,
+        #         value=0.0,
+        #         step=10000.0,
+        #         key=f"f_importe_min_{REPORTE}",
+        #     )
 
-        # 2. Aplicamos los filtros en cascada sobre el DataFrame (Frontend Puro)
-        if f_id_carga:
-            df_filtrado = df_filtrado[
-                df_filtrado["id_carga"].astype(str).str.contains(f_id_carga, case=False)
-            ]
-        if f_cuit:
-            df_filtrado = df_filtrado[
-                df_filtrado["cuit"].astype(str).str.contains(f_cuit, case=False)
-            ]
-        if f_desc_obra:
-            df_filtrado = df_filtrado[
-                df_filtrado["desc_obra"]
-                .astype(str)
-                .str.contains(f_desc_obra, case=False)
-            ]
-        if f_actividad:
-            df_filtrado = df_filtrado[
-                df_filtrado["actividad"]
-                .astype(str)
-                .str.contains(f_actividad, case=False)
-            ]
-        if f_importe_min:
-            df_filtrado = df_filtrado[df_filtrado["importe"] >= f_importe_min]
+        # # 2. Aplicamos los filtros en cascada sobre el DataFrame (Frontend Puro)
+        # if f_id_carga:
+        #     df_filtrado = df_filtrado[
+        #         df_filtrado["id_carga"].astype(str).str.contains(f_id_carga, case=False)
+        #     ]
+        # if f_cuit:
+        #     df_filtrado = df_filtrado[
+        #         df_filtrado["cuit"].astype(str).str.contains(f_cuit, case=False)
+        #     ]
+        # if f_desc_obra:
+        #     df_filtrado = df_filtrado[
+        #         df_filtrado["desc_obra"]
+        #         .astype(str)
+        #         .str.contains(f_desc_obra, case=False)
+        #     ]
+        # if f_actividad:
+        #     df_filtrado = df_filtrado[
+        #         df_filtrado["actividad"]
+        #         .astype(str)
+        #         .str.contains(f_actividad, case=False)
+        #     ]
+        # if f_importe_min:
+        #     df_filtrado = df_filtrado[df_filtrado["importe"] >= f_importe_min]
 
         event = dataframe(
             df_filtrado,
-            key=f"df_carga_{key}",
+            key=f"df_comprobantes_{key}",
             height=height,
             on_select="rerun",
             selection_mode="single-row-required",
             column_order=[
+                "ejercicio",
                 "mes",
                 "fecha",
-                "id_carga",
-                # "nro_comprobante",
+                "nro_comprobante",
                 "tipo",
-                "fuente",
-                "cta_cte",
-                "importe",
-                "desc_obra",
-                # "fondo_reparo",
-                "avance",
-                "nro_certificado",
-                "cuit",
-                "origen",
+                # "cta_cte",
+                "importe_bruto",
             ],
             column_config={
                 "fecha": st.column_config.DateColumn(
@@ -147,29 +153,31 @@ def dataframe_home_carga(
                 except Exception as e:
                     st.error(f"No se pudo encontrar la página de autocarga: {e}")
             if button_add("Agregar", key=f"btn_add_{key}"):
-                modal_comprobante_gasto(
-                    key_prefix=f"add_gasto_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                )
+                pass
+                # modal_honorarios(
+                #     key_prefix=f"add_honorarios_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                # )
             if button_edit("Editar", key=f"btn_edit_{key}"):
-                if len(event.selection.rows) > 0:
-                    selected_row_index = event.selection.rows[0]
-                    datos_edicion = df_filtrado.iloc[selected_row_index].to_dict()
-                    print(datos_edicion)
-                    modal_comprobante_gasto(
-                        key_prefix=f"edit_gasto_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                        datos_carga=datos_edicion,
-                        es_edicion=True,
-                    )
+                pass
+                # if len(event.selection.rows) > 0:
+                #     selected_row_index = event.selection.rows[0]
+                #     datos_edicion = df_filtrado.iloc[selected_row_index].to_dict()
+                #     print(datos_edicion)
+                #     modal_honorarios(
+                #         key_prefix=f"edit_honorarios_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                #         datos_carga=datos_edicion,
+                #         es_edicion=True,
+                #     )
             if button_delete("Borrar", key=f"btn_delete_{key}"):
                 if len(event.selection.rows) > 0:
                     selected_row_index = event.selection.rows[0]
                     form_data = df_filtrado.iloc[selected_row_index].to_dict()
                     # Disparamos el modal de confirmación
-                    modal_delete_gasto(
-                        id_mongo=str(form_data.get("id")),
-                        id_carga_contable=form_data.get("id_carga"),
-                        origen=form_data.get("origen", ""),
-                        key_prefix=f"delete_carga_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                    modal_delete_registro_gral(
+                        endpoint=f"{Endpoints.SLAVE_HONORARIOS.value}/delete_one/{str(form_data.get('id'))}",
+                        desc_registro=str(form_data.get("nro_comprobante")),
+                        session_state_update_key="honorarios_dataframes_iteration",
+                        key_prefix=f"delete_honorarios_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                     )
 
     return event, df_filtrado
@@ -188,7 +196,7 @@ def render() -> None:
         },
     ]
 
-    honorarios_carga_template(
+    honorarios_template(
         key=REPORTE,
         title=REPORTE.capitalize(),
         description="",
@@ -198,7 +206,7 @@ def render() -> None:
 
 @st.fragment  # Permite que los filtros internos no recarguen TODA la página
 # --------------------------------------------------
-def honorarios_carga_template(
+def honorarios_template(
     key: str,
     title: str,
     description: str,
@@ -224,7 +232,7 @@ def honorarios_carga_template(
                 with st.spinner("Preparando archivos Excel..."):
                     # Llamada a la API que devuelve StreamingResponse
                     excel_binario = fetch_excel_stream(
-                        f"{Endpoints.HONORARIOS_CARGA.value}/export",
+                        f"{Endpoints.SLAVE_HONORARIOS.value}/export",
                         params_preparation(selections, filtro_avanzado),
                     )
 
@@ -279,17 +287,20 @@ def honorarios_carga_template(
         )
         return
 
-    df_carga = pd.DataFrame()
-    df_ret = pd.DataFrame()
+    df_honorarios = pd.DataFrame()
 
     # 3. Lógica de Fetch Iterativo (El equivalente al v-for de Vue + API calls)
     try:
-        if "carga_dataframes_iteration" not in st.session_state:
-            st.session_state["carga_dataframes_iteration"] = 0
-        trigger = st.session_state["carga_dataframes_iteration"]
-        df_carga, df_ret = get_honorarios(selections, filtro_avanzado, trigger)
+        if "honorarios_dataframes_iteration" not in st.session_state:
+            st.session_state["honorarios_dataframes_iteration"] = 0
+        trigger = st.session_state["honorarios_dataframes_iteration"]
+        df_honorarios = get_honorarios(
+            selections=selections,
+            filtro_avanzado=filtro_avanzado,
+            update_trigger=trigger,
+        )
 
-        if df_carga.empty:
+        if df_honorarios.empty:
             st.info("No se encontraron resultados.")
         # else:
         #     st.session_state[f"data_{key}_carga"] = df_final
@@ -301,28 +312,32 @@ def honorarios_carga_template(
         st.error(f"⚠️ Error de API: {e}")
 
     # 4. Mostrar resultados (usando session_state para que no desaparezcan)
-    if not df_carga.empty:
-        df_carga = df_carga.sort_values(
-            by=["fecha", "nro_comprobante"], ascending=False
-        ).reset_index(drop=True)
-        event, df_filtrado = dataframe_home_carga(df_carga, key=f"{key}_df_carga")
+    if not df_honorarios.empty:
+        event, df_filtrado = dataframe_honorarios_comprobantes(
+            df_honorarios.copy(), key=f"{key}_df_comprobantes"
+        )
 
         # 2. Lógica de filtrado dinámico
         # Verificamos si hay alguna fila seleccionada
         if len(event.selection.rows) > 0:
             selected_row_index = event.selection.rows[0]
             # Extraemos el id_carga de esa fila
-            selected_id = df_filtrado.iloc[selected_row_index]["id_carga"]
+            selected_id = df_filtrado.iloc[selected_row_index]["nro_comprobante"]
 
             # st.info(f"Mostrando detalles para ID Carga: **{selected_id}**")
             with st.container(horizontal=True, border=False, width="stretch"):
-                df_ret_filtrado = df_ret[df_ret["id_carga"] == selected_id]
-                df_carga_filtrado = df_filtrado[df_filtrado["id_carga"] == selected_id]
-                df_carga_filtrado["importe"] = df_carga_filtrado["importe"].apply(
-                    formato_moneda_ar
+                df_imp = df_honorarios[df_honorarios["nro_comprobante"] == selected_id]
+                df_imp = (
+                    df_imp.groupby(["actividad", "partida"])[["importe_bruto"]]
+                    .sum()
+                    .reset_index()
                 )
+                df_imp["importe"] = df_imp["importe_bruto"].apply(formato_moneda_ar)
+                df_imp = df_imp.sort_values(
+                    by=["actividad", "partida"], ascending=True
+                ).reset_index(drop=True)
                 dataframe_with_buttons(
-                    df_carga_filtrado,
+                    df_imp,
                     key=f"{key}_df_imp",
                     column_order=[
                         "actividad",
@@ -331,11 +346,34 @@ def honorarios_carga_template(
                     ],
                     show_buttons=False,
                 )
-                df_ret_filtrado["importe"] = df_ret_filtrado["importe"].apply(
-                    formato_moneda_ar
+
+                df_suma = (
+                    df_honorarios[df_honorarios["nro_comprobante"] == selected_id][
+                        [
+                            "iibb",
+                            "lp",
+                            "sellos",
+                            "seguro",
+                            "otras_retenciones",
+                            "anticipo",
+                            "descuento",
+                            "mutual",
+                            "embargo",
+                            "importe_bruto",
+                        ]
+                    ]
+                    .sum()
+                    .to_dict()
                 )
+                payload_retenciones = build_retenciones_payload(df_suma)
+                # Extraemos los datos crudos
+                lista_ret = payload_retenciones.get("retenciones", [])
+                # Ordenamos la lista de retenciones por el código (convertido a entero)
+                lista_ordenada = sorted(lista_ret, key=lambda x: int(x["codigo"]))
+                df_ret = pd.DataFrame(lista_ordenada)
+                df_ret["importe"] = df_ret["importe"].apply(formato_moneda_ar)
                 dataframe_with_buttons(
-                    df_ret_filtrado,
+                    df_ret,
                     key=f"{key}_df_ret",
                     column_order=[
                         "codigo",

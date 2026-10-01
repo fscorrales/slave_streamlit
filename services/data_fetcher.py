@@ -192,6 +192,7 @@ def get_ejercicios_list() -> list[int]:
 # --------------------------------------------------
 @st.cache_data(ttl=3600)
 def get_honorarios(
+    selections: list[tuple[str, list[Any]]],
     filtro_avanzado: str = "",
     update_trigger: int = 0,
     cache_file_path: str | None = None,
@@ -250,10 +251,13 @@ def get_honorarios(
                 )
 
     # 2. Consultar la API
-    params_peticion: dict[str, Any] = {
+    params_peticion = {
         "limit": 0,
-        "queryFilter": filtro_avanzado,
     }
+    for nombre_param, valores in selections:
+        if valores:
+            params_peticion[nombre_param] = ",".join(map(str, valores))
+
     try:
         df: pd.DataFrame = fetch_dataframe(
             Endpoints.SLAVE_HONORARIOS.value, params=params_peticion
