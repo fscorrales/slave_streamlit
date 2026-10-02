@@ -1,4 +1,41 @@
-__all__ = ["build_retenciones_payload", "formato_moneda_ar"]
+__all__ = [
+    "build_retenciones_payload",
+    "formato_moneda_ar",
+    "normalize_name_for_match",
+]
+
+import re
+
+import pandas as pd
+
+
+# --------------------------------------------------
+def normalize_name_for_match(name: object) -> str:
+    """
+    Normaliza un nombre para hacer matching robusto entre fuentes
+    heterogéneas (con/sin coma, con prefijos como ``(JUBILADO)`` o
+    ``[LP]``, mayúsculas/minúsculas distintas, etc.).
+
+    La idea es generar una clave estable que permita emparejar
+    variaciones del mismo agente sin alterar el nombre original que
+    se conserva en el DataFrame.
+
+    Args:
+        name: Nombre crudo (cualquier tipo; ``None``/``NaN`` -> ``""``).
+
+    Returns:
+        Clave normalizada en mayúsculas y sin puntuación.
+    """
+    if pd.isna(name):
+        return ""
+    text: str = str(name).upper().strip()
+    # 1. Quitar prefijos opcionales entre paréntesis o corchetes al inicio.
+    text = re.sub(r"^\s*[\(\[][^\)\]]*[\)\]]\s*", "", text)
+    # 2. Reemplazar comas y puntos y coma por espacios.
+    text = re.sub(r"[,;]", " ", text)
+    # 3. Colapsar espacios múltiples.
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 # --------------------------------------------------

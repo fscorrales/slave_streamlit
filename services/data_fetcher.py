@@ -14,6 +14,7 @@ los cuales pertenecen a la capa de UI (``AGENTS.md`` §1).
 __all__ = [
     "get_precarizados",
     "get_referencias_factureros",
+    "get_referencias_honorarios",
     "get_ejercicios_list",
     "get_honorarios",
 ]
@@ -89,6 +90,36 @@ def get_referencias_factureros(update_trigger: int = 0) -> tuple[list[str], list
     """
     df = get_precarizados(update_trigger=update_trigger)
     return _valores_unicos(df, "actividad"), _valores_unicos(df, "partida")
+
+
+# --------------------------------------------------
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_referencias_honorarios(update_trigger: int = 0) -> list[str]:
+    """
+    Retorna la lista única y ordenada de ``tipo`` de comprobante de
+    la colección ``honorarios``, para poblar el ``selectbox`` de
+    ``views.modals.modal_honorarios``.
+
+    Es el equivalente a :func:`get_referencias_factureros` para la
+    colección de honorarios: delega en :func:`get_honorarios` (que
+    trae su propio caché y fallback a Parquet) y extrae los valores
+    únicos con :func:`_valores_unicos`.
+
+    Args:
+        update_trigger: Incrementar para invalidar el caché. Se usa
+            ``st.session_state["honorarios_dataframes_iteration"]``.
+
+    Returns:
+        Lista ordenada de tipos de comprobante; vacía si la
+        colección está vacía (el ``selectbox`` del modal queda en
+        modo escritura libre).
+
+    Raises:
+        APIConnectionError: Si la API falla y no hay caché disponible.
+        APIResponseError: Si la API retorna un error y no hay caché.
+    """
+    df = get_honorarios(selections=[], update_trigger=update_trigger)
+    return _valores_unicos(df, "tipo")
 
 
 # --------------------------------------------------

@@ -12,6 +12,7 @@ from services.data_fetcher import (
     get_honorarios,
     get_precarizados,
     get_referencias_factureros,
+    get_referencias_honorarios,
 )
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "delete_request",
     "get_precarizados",
     "get_referencias_factureros",
+    "get_referencias_honorarios",
     "get_ejercicios_list",
     "get_honorarios",
 ]

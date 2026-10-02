@@ -2,15 +2,27 @@
 
 import re
 import time
-from datetime import datetime
+from datetime import date, datetime
+from io import BytesIO
 from typing import Any
+from urllib.parse import quote
 
 import pandas as pd
 import streamlit as st
+from pydantic import ValidationError
 
 from components.buttons import button_cancel, button_submit
 from services.api_slave import delete_request, post_request, put_request
-from services.data_fetcher import get_referencias_factureros
+from services.data_fetcher import (
+    get_precarizados,
+    get_referencias_factureros,
+    get_referencias_honorarios,
+)
+from services.process_df import (
+    construir_payload_honorarios,
+    merge_informe_con_precarizados,
+    process_informe_por_destino,
+)
 from utils.context import sync_session_token
 from utils.endpoints import Endpoints
 from utils.exceptions import AppBaseException
@@ -312,3 +324,265 @@ def modal_precarizado(
                         st.error(f"⚠️ {exc}")
                     except Exception as exc:
                         st.error(f"❌ Ocurrió un error inesperado: {exc}")
+
+
+# --- MODAL: AGREGAR COMPROBANTE DE HONORARIOS ---
+@st.dialog("Agregar Comprobantes de HONORARIOS", width="large")
+def modal_honorarios(
+    key_prefix: str,
+    session_state_update_key: str = "honorarios_dataframes_iteration",
+) -> None:
+    """
+    Modal para dar de alta un comprobante de honorarios y sus líneas
+    en la colección ``slave_honorarios``
+    (``POST /slave/honorarios/add_many/{nro_comprobante}``).
+
+    Flujo secuencial **sin tabs**, deliberadamente:
+
+        1. **Paso 1 (gate):** upload del CSV *Resumen de Pagos por
+           Destino* -> ``process_informe_por_destino()`` -> merge con
+           ``get_precarizados()`` para resolver
+           ``cuit``/``actividad``/``partida``.
+           Si algún agente no matchea o viene incompleto, el proceso
+           **se corta ahí**: el Paso 2 nunca se renderiza, por lo que
+           **no se pierde ningún dato** que el usuario hubiera tipeado.
+        2. **Paso 2:** fecha, nro de comprobante, cta_cte y tipo.
+           De la fecha se derivan ``ejercicio`` y ``mes``; del año,
+           los dos últimos dígitos para armar ``"00000/aa"``.
+        3. **Paso 3:** confirmación y envío del payload validado
+           contra ``HonorarioReport``.
+
+    Se descartó ``st.tabs`` porque las pestañas no se pueden bloquear:
+    el usuario podría saltar al Paso 2 sin haber validado el padrón.
+
+    Args:
+        key_prefix: Prefijo único para las keys de los widgets (con
+            timestamp con microsegundos, igual que ``modal_precarizado``).
+        session_state_update_key: Clave de ``st.session_state`` a
+            incrementar tras guardar, para refrescar la grilla de
+            honorarios (y las referencias de ``tipo``).
+    """
+    # CRÍTICO: ``@st.dialog`` corre en un contexto de script separado
+    # donde los ``ContextVar`` del token NO se heredan.
+    token = sync_session_token(st.session_state.get("token"))
+
+    def _barra_cancelar() -> None:
+        with st.container(
+            horizontal=True, border=False, horizontal_alignment="center", gap="large"
+        ):
+            if button_cancel(
+                "Cancelar", key=f"{key_prefix}_btn_cancel", type="secondary"
+            ):
+                st.rerun()
+
+    # ═══════════════ PASO 1 · INFORME (GATE) ═══════════════
+    st.markdown("#### Paso 1 · Informe por Destino")
+    st.caption(
+        "Cargue el CSV del *Resumen de Pagos por Destino*. El formulario "
+        "se habilita únicamente si **todos** los agentes figuran en el "
+        "padrón de Precarizados con CUIT, Actividad y Partida."
+    )
+
+    uploaded_file = st.file_uploader(
+        "Archivo CSV",
+        type=["csv"],
+        key=f"{key_prefix}_upload_informe",
+        help="Exportado del sistema legado con título 'Resumen de Pagos por Destino'.",
+    )
+
+    if uploaded_file is None:
+        st.info("⏳ Cargue el archivo CSV para continuar.")
+        _barra_cancelar()
+        return
+
+    # ``getvalue()`` no consume el stream: permite re-leer en cada rerun.
+    df_informe = process_informe_por_destino(BytesIO(uploaded_file.getvalue()))
+    if df_informe.empty:
+        st.error(
+            "❌ No se pudo interpretar el CSV. Verifique que sea el reporte "
+            "'Resumen de Pagos por Destino' y que no esté vacío."
+        )
+        _barra_cancelar()
+        return
+
+    update_trigger = int(st.session_state.get(session_state_update_key, 0))
+    try:
+        df_precarizados = get_precarizados(update_trigger=update_trigger)
+    except AppBaseException as exc:
+        st.error(f"⚠️ No se pudo obtener el padrón de Precarizados: {exc}")
+        _barra_cancelar()
+        return
+
+    df_merged, sin_match, incompletos = merge_informe_con_precarizados(
+        df_informe, df_precarizados
+    )
+
+    # ── GATE: agentes faltantes => se corta el proceso aquí ──
+    if sin_match or incompletos:
+        if sin_match:
+            st.error(
+                f"🚫 **{len(sin_match)} agente(s) NO figuran en el padrón de "
+                "Precarizados.** Deben darse de alta antes de continuar:"
+            )
+            for nombre in sin_match:
+                st.markdown(f"- `{nombre}`")
+        if incompletos:
+            st.error(
+                f"🚫 **{len(incompletos)} agente(s) figuran con datos "
+                "incompletos** (falta CUIT, Actividad o Partida). Deben "
+                "completarse antes de continuar:"
+            )
+            for nombre in incompletos:
+                st.markdown(f"- `{nombre}`")
+
+        st.warning(
+            "**El proceso se detiene aquí.** Cancele, cargue esos agentes "
+            "desde la vista *Precarizados* y vuelva a intentarlo. Al reabrir "
+            "este modal sólo deberá volver a subir el CSV."
+        )
+        _barra_cancelar()
+        return
+
+    st.success(
+        f"✅ **{len(df_merged)}** registros leídos · todos con "
+        "CUIT / Actividad / Partida resueltos."
+    )
+    with st.expander("Vista previa de los registros a cargar"):
+        st.dataframe(df_merged.head(15), width="stretch")
+
+    # ═══════════════ PASO 2 · DATOS DEL COMPROBANTE ═══════════════
+    st.markdown("#### Paso 2 · Datos del Comprobante")
+
+    try:
+        tipos: list[str] = get_referencias_honorarios(update_trigger)
+    except AppBaseException as exc:
+        # No silenciamos: informamos y dejamos el selectbox en modo
+        # escritura libre (accept_new_options=True) como fallback.
+        st.warning(f"⚠️ No se pudieron cargar los tipos de comprobante: {exc}")
+        tipos = []
+
+    col_fecha, col_nro = st.columns(2)
+    fecha = col_fecha.date_input(
+        "Fecha del comprobante",
+        value=date.today(),
+        key=f"{key_prefix}_fecha",
+    )
+    nro_base = col_nro.text_input(
+        "Nro. de comprobante",
+        key=f"{key_prefix}_nro",
+        placeholder="Ej: 123",
+        help="Sólo dígitos (hasta 5). Se completa con el año: 00000/aa.",
+    )
+
+    col_cta, col_tipo = st.columns(2)
+    cta_cte = col_cta.text_input(
+        "Cuenta Corriente",
+        value="130832-05",
+        key=f"{key_prefix}_cta_cte",
+        help="Por defecto 130832-05.",
+    )
+    tipo = col_tipo.selectbox(
+        "Tipo de Comprobante",
+        options=tipos,
+        key=f"{key_prefix}_tipo",
+        placeholder="Escriba o elija un Tipo.",
+        accept_new_options=True,
+    )
+
+    # ── Datos derivados de la fecha ──
+    ejercicio: int = fecha.year
+    mes: str = fecha.strftime("%m/%Y")
+    nro_limpio: str = nro_base.strip()
+    nro_valido: bool = bool(re.fullmatch(r"\d{1,5}", nro_limpio))
+    nro_comprobante: str = (
+        f"{nro_limpio.zfill(5)}/{str(ejercicio)[-2:]}" if nro_valido else ""
+    )
+    # selectbox sin selección devuelve None; ``str(None)`` sería
+    # "None" (truthy), por eso se normaliza ANTES de validar.
+    tipo_limpio: str = "" if tipo is None else str(tipo).strip()
+
+    st.caption(
+        f"**Ejercicio:** `{ejercicio}` · **Mes:** `{mes}` · "
+        f"**Nro. comprobante:** `{nro_comprobante or '—'}`"
+    )
+
+    # ═══════════════ PASO 3 · CONFIRMACIÓN ═══════════════
+    st.markdown("#### Paso 3 · Confirmación")
+    endpoint: str = (
+        f"{Endpoints.SLAVE_HONORARIOS.value}/add_many/"
+        f"{quote(nro_comprobante, safe='') if nro_comprobante else '...'}"
+    )
+    st.caption(f"Se enviarán **{len(df_merged)}** documentos a `{endpoint}`.")
+
+    st.markdown("---")
+    with st.container(
+        horizontal=True, border=False, horizontal_alignment="center", gap="large"
+    ):
+        if button_cancel(
+            "Cancelar", key=f"{key_prefix}_btn_cancel_final", type="secondary"
+        ):
+            st.rerun()
+
+        if button_submit("Cargar Comprobante", key=f"{key_prefix}_btn_submit"):
+            errores: list[str] = []
+            if not nro_valido:
+                errores.append(
+                    "El Nro. de comprobante debe tener entre 1 y 5 dígitos."
+                )
+            if not fecha:
+                errores.append("Debe indicar la Fecha.")
+            if not cta_cte.strip():
+                errores.append("Debe indicar la Cuenta Corriente.")
+            if not tipo_limpio:
+                errores.append("Debe indicar el Tipo de comprobante.")
+
+            if errores:
+                for err in errores:
+                    st.toast(err, icon="⚠️")
+                return
+
+            fecha_dt = datetime(fecha.year, fecha.month, fecha.day)
+
+            # Validación estricta contra HonorarioReport: si algo
+            # falla, NO se envía nada a la API.
+            try:
+                registros: list[dict[str, Any]] = construir_payload_honorarios(
+                    df_merged,
+                    ejercicio=ejercicio,
+                    mes=mes,
+                    fecha=fecha_dt,
+                    nro_comprobante=nro_comprobante,
+                    cta_cte=cta_cte.strip(),
+                    tipo=tipo_limpio,
+                )
+            except ValidationError as exc:
+                st.error(f"⚠️ Los datos no cumplen el esquema HonorarioReport: {exc}")
+                return
+
+            with st.spinner(f"Enviando {len(registros)} documentos..."):
+                try:
+                    # token explícito: el ContextVar no se propaga en diálogos.
+                    res = post_request(endpoint, json_body=registros, token=token)
+                except AppBaseException as exc:
+                    st.error(f"⚠️ {exc}")
+                    return
+
+                if res:
+                    st.snow()
+                    st.toast(
+                        f"✅ Comprobante {nro_comprobante}: "
+                        f"+{len(registros)} documentos",
+                        icon="📈",
+                    )
+                    # Invalida el caché de la grilla y de las referencias.
+                    st.session_state[session_state_update_key] = (
+                        int(st.session_state.get(session_state_update_key, 0)) + 1
+                    )
+                    time.sleep(2)
+                    st.rerun()
+                else:
+                    st.error(
+                        "La API no confirmó la operación. "
+                        "Verifique e intente nuevamente."
+                    )
+

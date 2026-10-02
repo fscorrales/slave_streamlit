@@ -26,7 +26,12 @@ from utils import (
     build_retenciones_payload,
     formato_moneda_ar,
 )
-from views import dataframe_with_buttons, modal_delete_registro_gral, params_preparation
+from views import (
+    dataframe_with_buttons,
+    modal_delete_registro_gral,
+    modal_honorarios,
+    params_preparation,
+)
 
 REPORTE = "honorarios"
 
@@ -153,10 +158,9 @@ def dataframe_honorarios_comprobantes(
                 except Exception as e:
                     st.error(f"No se pudo encontrar la página de autocarga: {e}")
             if button_add("Agregar", key=f"btn_add_{key}"):
-                pass
-                # modal_honorarios(
-                #     key_prefix=f"add_honorarios_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                # )
+                modal_honorarios(
+                    key_prefix=f"add_honorario_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+                )
             if button_edit("Editar", key=f"btn_edit_{key}"):
                 pass
                 # if len(event.selection.rows) > 0:

@@ -10,7 +10,6 @@ __all__ = ["SlaveMongoMigrator"]
 
 import json
 import os
-import re
 from pathlib import Path
 
 import pandas as pd
@@ -21,29 +20,7 @@ from services.api_slave import fetch_factureros
 from utils import print_rich_table
 from utils.endpoints import Endpoints
 from utils.exceptions import APIConnectionError, APIResponseError
-
-
-# --------------------------------------------------
-def _normalize_name_for_match(name: object) -> str:
-    """
-    Normaliza un nombre para hacer matching robusto entre fuentes
-    heterogéneas (con/sin coma, con prefijos como ``(JUBILADO)`` o
-    ``[LP]``, mayúsculas/minúsculas distintas, etc.).
-
-    La idea es generar una clave estable que permita emparejar
-    variaciones del mismo agente sin alterar el nombre original que
-    se conserva en el DataFrame.
-    """
-    if pd.isna(name):
-        return ""
-    text: str = str(name).upper().strip()
-    # 1. Quitar prefijos opcionales entre paréntesis o corchetes al inicio.
-    text = re.sub(r"^\s*[\(\[][^\)\]]*[\)\]]\s*", "", text)
-    # 2. Reemplazar comas y puntos y coma por espacios.
-    text = re.sub(r"[,;]", " ", text)
-    # 3. Colapsar espacios múltiples.
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+from utils.transform_data import normalize_name_for_match as _normalize_name_for_match
 
 
 # --------------------------------------------------

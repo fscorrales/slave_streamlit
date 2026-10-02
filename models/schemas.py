@@ -40,6 +40,7 @@ class HonorarioReport(BaseModel):
     mes: str
     fecha: datetime
     nro_comprobante: str
+    cta_cte: str
     tipo: str
     cuit: str
     actividad: str

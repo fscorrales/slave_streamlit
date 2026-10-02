@@ -6,15 +6,23 @@ Pydantic de ``models/schemas.py``.
 No importa ``streamlit`` ni realiza llamadas HTTP (AGENTS.md §1).
 """
 
-__all__ = ["process_informe_por_destino"]
+__all__ = [
+    "process_informe_por_destino",
+    "merge_informe_con_precarizados",
+    "construir_payload_honorarios",
+]
 
 
+from datetime import datetime
+from io import BytesIO
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
-from models.schemas import InformePorDestino
+from models.schemas import HonorarioReport, InformePorDestino
 from utils.handling_files import read_csv_file
+from utils.transform_data import normalize_name_for_match
 
 # --------------------------------------------------
 # Estructura del reporte "Resumen de Pagos por Destino"
@@ -95,11 +103,136 @@ def _parse_moneda(valor: object) -> float:
     except ValueError:
         return 0.0
 
+# --------------------------------------------------
+def _texto_limpio(valor: object) -> str:
+    """
+    Convierte un escalar de pandas/numpy a ``str`` saneado.
+
+    Normaliza ``None``/``NaN``/``pd.NA`` a cadena vacía y recorta la
+    parte decimal de los floats enteros (p.ej. ``354.0`` -> ``"354"``)
+    para coincidir con el valor canónico del padrón.
+
+    Args:
+        valor: Cualquier escalar proveniente de una fila.
+
+    Returns:
+        Cadena limpia (vacía si el valor era nulo).
+    """
+    if valor is None:
+        return ""
+    if isinstance(valor, str):
+        return valor.strip()
+    if pd.isna(valor):
+        return ""
+    if isinstance(valor, float) and valor.is_integer():
+        return str(int(valor))
+    return str(valor).strip()
+
+
+# --------------------------------------------------
+def merge_informe_con_precarizados(
+    df_informe: pd.DataFrame,
+    df_precarizados: pd.DataFrame,
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """
+    Cruza el informe por destino con el padrón de precarizados para
+    completar ``cuit`` / ``actividad`` / ``partida``.
+
+    El cruce se hace por ``nombre_completo`` usando
+    :func:`utils.transform_data.normalize_name_for_match` como clave
+    normalizada (tolera comas, prefijos ``(JUBILADO)``/``[LP]``,
+    mayúsculas distintas, etc.), igual que en la migración.
+
+    Args:
+        df_informe: Salida de :func:`process_informe_por_destino`.
+        df_precarizados: Padrón de la colección ``factureros``
+            (columnas ``nombre_completo``, ``cuit``, ``actividad``,
+            ``partida``).
+
+    Returns:
+        Tupla ``(merged, sin_match, incompletos)``:
+
+        - ``merged``: el informe enriquecido con las columnas del
+          padrón (``_match_key`` eliminada).
+        - ``sin_match``: nombres ordenados y sin duplicados de
+          agentes **ausentes** en el padrón. Deben darse de alta
+          manualmente.
+        - ``incompletos``: nombres ordenados y sin duplicados de
+          agentes **presentes** pero sin ``cuit``/``actividad``/
+          ``partida``. Deben completarse en el padrón (el ``cuit``
+          es obligatorio en ``HonorarioReport``).
+
+        Ambas listas vacías => se puede continuar sin obstáculos.
+    """
+    if df_informe.empty:
+        return pd.DataFrame(), [], []
+
+    df_inf: pd.DataFrame = df_informe.copy()
+    df_inf["_match_key"] = df_inf["nombre_completo"].apply(
+        normalize_name_for_match
+    )
+
+    # Padrón vacío: ningún agente puede resolverse.
+    if df_precarizados.empty:
+        sin_match = sorted(
+            set(df_informe["nombre_completo"].astype(str).str.strip()) - {""}
+        )
+        return df_inf.drop(columns=["_match_key"]), sin_match, []
+
+    # Sólo las columnas útiles del padrón: evita la colisión de
+    # ``nombre_completo`` al hacer merge sobre ``_match_key``.
+    columnas_padron: list[str] = [
+        columna
+        for columna in ("nombre_completo", "cuit", "actividad", "partida")
+        if columna in df_precarizados.columns
+    ]
+    df_pad: pd.DataFrame = df_precarizados[columnas_padron].copy()
+    # Defensa: si la API no trajo alguna columna, se crea vacía para
+    # que la clasificación la detecte como "incompleto".
+    for columna in ("cuit", "actividad", "partida"):
+        if columna not in df_pad.columns:
+            df_pad[columna] = pd.NA
+
+    df_pad["_match_key"] = df_pad["nombre_completo"].apply(
+        normalize_name_for_match
+    )
+    # Un agente repetido en el padrón: nos quedamos con el primero.
+    df_pad = df_pad.drop_duplicates(subset=["_match_key"], keep="first")
+
+    lookup: pd.DataFrame = df_pad[["_match_key", "cuit", "actividad", "partida"]]
+    merged: pd.DataFrame = df_inf.merge(lookup, on="_match_key", how="left")
+
+    # ── Clasificación de agentes ──
+    # "Existe" se determina por actividad/partida (obligatorios en
+    # FactureroReport): si traen nulo, el merge no encontró fila.
+    existe = merged["actividad"].notna() & merged["partida"].notna()
+
+    def _falta(columna: str) -> pd.Series:
+        serie = merged[columna]
+        return serie.isna() | serie.astype(str).str.strip().isin(
+            ["", "nan", "None", "<NA>"]
+        )
+
+    incompleto = _falta("cuit") | _falta("actividad") | _falta("partida")
+
+    sin_match = sorted(
+        set(merged.loc[~existe, "nombre_completo"].astype(str)) - {"", "nan"}
+    )
+    incompletos = sorted(
+        set(merged.loc[existe & incompleto, "nombre_completo"].astype(str))
+        - {"", "nan"}
+    )
+
+    merged = merged.drop(columns=["_match_key"])
+    return merged, sin_match, incompletos
+
+
+
 
 
 # --------------------------------------------------
 def process_informe_por_destino(
-    dataframe: pd.DataFrame | str | Path | None = None,
+    dataframe: pd.DataFrame | str | Path | BytesIO | None = None,
 ) -> pd.DataFrame:
     """
     Lee y convierte el reporte "Resumen de Pagos por Destino" en un
@@ -118,6 +251,9 @@ def process_informe_por_destino(
               ``report_template()`` con ``uploaded_file``).
             - ``str | Path``: Ruta a un CSV, que se lee con
               ``read_csv_file``.
+            - ``BytesIO``: buffer en memoria (p.ej. ``BytesIO(f.getvalue())``
+              con el archivo de ``st.file_uploader``, cuyo
+              ``UploadedFile`` hereda de ``BytesIO``).
             - ``None``: se lee ``services/informe_por_destino.csv``
               (conveniencia para pruebas directas).
 
@@ -135,7 +271,11 @@ def process_informe_por_destino(
     # ── 1. Resolver la entrada a un DataFrame crudo ──────────
     if dataframe is None:
         dataframe = read_csv_file(_DEFAULT_CSV)
-    elif isinstance(dataframe, (str, Path)):
+    elif isinstance(dataframe, (str, Path, BytesIO)):
+        # Ruta a un CSV **o** buffer en memoria (``st.file_uploader``
+        # devuelve un ``UploadedFile`` que hereda de ``BytesIO``).
+        # Sin esta rama, un ``BytesIO`` caería en el ``isinstance``
+        # de más abajo y se devolvería un DataFrame vacío.
         dataframe = read_csv_file(dataframe)
 
     if not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
@@ -208,4 +348,79 @@ def process_informe_por_destino(
             resultado[campo] = resultado[campo].astype(float)
 
     return resultado
+
+
+
+# --------------------------------------------------
+def construir_payload_honorarios(
+    df_merged: pd.DataFrame,
+    *,
+    ejercicio: int,
+    mes: str,
+    fecha: datetime,
+    nro_comprobante: str,
+    cta_cte: str,
+    tipo: str,
+) -> list[dict[str, Any]]:
+    """
+    Construye la lista de registros lista para
+    ``POST /slave/honorarios/add_many/{nro_comprobante}``.
+
+    Cada registro se valida contra :class:`HonorarioReport` antes de
+    retornarse, de modo que un esquema incompleto se detecta en el
+    cliente y no como un error 4xx de la API.
+
+    Args:
+        df_merged: Salida de :func:`merge_informe_con_precarizados`
+            ya sin filas sin match/incompletas.
+        ejercicio: Ejercicio derivado del año de la fecha.
+        mes: Mes en formato ``"%m/%Y"``.
+        fecha: Fecha del comprobante (se envía como ``datetime``).
+        nro_comprobante: Comprobante completo ``"00000/yy"``.
+        cta_cte: Cuenta corriente (e.g. ``"130832-05"``).
+        tipo: Tipo de comprobante.
+
+    Returns:
+        Lista de dicts compatibles con ``HonorarioReport``.
+
+    Raises:
+        pydantic.ValidationError: Si alguna fila no cumple el
+            esquema. El llamador debe informarlo y NO enviar nada.
+    """
+    campos_monto: tuple[str, ...] = (
+        "importe_bruto",
+        "iibb",
+        "lp",
+        "sellos",
+        "seguro",
+        "otras_retenciones",
+        "anticipo",
+        "descuento",
+        "mutual",
+        "embargo",
+    )
+
+    registros: list[dict[str, Any]] = []
+    for fila in df_merged.to_dict(orient="records"):
+        registro: dict[str, Any] = {
+            "ejercicio": int(ejercicio),
+            "mes": str(mes),
+            "fecha": fecha,
+            "nro_comprobante": str(nro_comprobante),
+            "cta_cte": str(cta_cte),
+            "tipo": str(tipo),
+            "cuit": _texto_limpio(fila.get("cuit")),
+            "actividad": _texto_limpio(fila.get("actividad")),
+            "partida": _texto_limpio(fila.get("partida")),
+        }
+        for campo in campos_monto:
+            valor = fila.get(campo, 0.0)
+            registro[campo] = float(valor) if pd.notna(valor) else 0.0
+        registro["updated_at"] = datetime.now()
+
+        # Validación estricta contra el esquema del modelo.
+        HonorarioReport.model_validate(registro)
+        registros.append(registro)
+
+    return registros
 
