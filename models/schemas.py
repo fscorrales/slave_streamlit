@@ -56,3 +56,20 @@ class HonorarioReport(BaseModel):
     mutual: float
     embargo: float
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class InformePorDestino(BaseModel):
+    """Modelo de datos para reporte de informes por destino."""
+
+    nombre_completo: str
+    importe_bruto: float
+    # Retenciones
+    iibb: float
+    lp: float
+    sellos: float
+    seguro: float
+    otras_retenciones: float
+    anticipo: float
+    descuento: float
+    mutual: float
+    embargo: float
