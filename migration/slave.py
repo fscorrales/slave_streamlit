@@ -381,6 +381,22 @@ class SlaveMongoMigrator:
         keep = ["NoSIIF"]
         df = df.loc[~df.nro_comprobante.str.contains("|".join(keep))]
 
+        # Filtrar por ejercicio >= 2021
+        df = df.loc[df["ejercicio"] >= 2021]
+
+        # Diccionario de mapeo
+        mapeo = {
+            "H": "Honorarios",
+            "C": "Comisiones",
+            "L": "Licencias",
+            "E": "Horas Extras",
+        }
+        # Aplicar el cambio sobre la columna 'tipo'
+        df["tipo"] = df["tipo"].map(mapeo)
+
+        # Incorporo campo "cta_cte" con valor fijo "130832-05", por ahora
+        df["cta_cte"] = "130832005"
+
         # ----------------------------------------------------------
         # Enriquecer el DataFrame con el CUIT proveniente del padrón
         # de factureros disponible en la API
