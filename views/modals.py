@@ -387,7 +387,7 @@ def modal_honorarios(
         "Archivo CSV",
         type=["csv"],
         key=f"{key_prefix}_upload_informe",
-        help="Exportado del sistema legado con título 'Resumen de Pagos por Destino'.",
+        help="Exportado del Sistema de Gestión Financiera con título 'Resumen de Pagos por Destino'.",
     )
 
     if uploaded_file is None:
@@ -454,18 +454,20 @@ def modal_honorarios(
     st.markdown("#### Paso 2 · Datos del Comprobante")
 
     try:
-        tipos: list[str] = get_referencias_honorarios(update_trigger)
+        tipos, ctas_ctes = get_referencias_honorarios(update_trigger)
     except AppBaseException as exc:
         # No silenciamos: informamos y dejamos el selectbox en modo
         # escritura libre (accept_new_options=True) como fallback.
-        st.warning(f"⚠️ No se pudieron cargar los tipos de comprobante: {exc}")
-        tipos = []
-
+        st.warning(
+            f"⚠️ No se pudieron cargar los tipos de comprobante y/o las cuentas corrientes: {exc}"
+        )
+        tipos, ctas_ctes = [], []
     col_fecha, col_nro = st.columns(2)
     fecha = col_fecha.date_input(
         "Fecha del comprobante",
         value=date.today(),
         key=f"{key_prefix}_fecha",
+        format="DD/MM/YYYY",
     )
     nro_base = col_nro.text_input(
         "Nro. de comprobante",
@@ -475,11 +477,12 @@ def modal_honorarios(
     )
 
     col_cta, col_tipo = st.columns(2)
-    cta_cte = col_cta.text_input(
+    cta_cte = col_cta.selectbox(
         "Cuenta Corriente",
-        value="130832-05",
+        options=ctas_ctes,
         key=f"{key_prefix}_cta_cte",
-        help="Por defecto 130832-05.",
+        placeholder="Escriba o elija una Cuenta Corriente.",
+        accept_new_options=True,
     )
     tipo = col_tipo.selectbox(
         "Tipo de Comprobante",
@@ -526,9 +529,7 @@ def modal_honorarios(
         if button_submit("Cargar Comprobante", key=f"{key_prefix}_btn_submit"):
             errores: list[str] = []
             if not nro_valido:
-                errores.append(
-                    "El Nro. de comprobante debe tener entre 1 y 5 dígitos."
-                )
+                errores.append("El Nro. de comprobante debe tener entre 1 y 5 dígitos.")
             if not fecha:
                 errores.append("Debe indicar la Fecha.")
             if not cta_cte.strip():
@@ -585,4 +586,3 @@ def modal_honorarios(
                         "La API no confirmó la operación. "
                         "Verifique e intente nuevamente."
                     )
-

@@ -94,7 +94,7 @@ def get_referencias_factureros(update_trigger: int = 0) -> tuple[list[str], list
 
 # --------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner=False)
-def get_referencias_honorarios(update_trigger: int = 0) -> list[str]:
+def get_referencias_honorarios(update_trigger: int = 0) -> tuple[list[str], list[str]]:
     """
     Retorna la lista única y ordenada de ``tipo`` de comprobante de
     la colección ``honorarios``, para poblar el ``selectbox`` de
@@ -110,7 +110,7 @@ def get_referencias_honorarios(update_trigger: int = 0) -> list[str]:
             ``st.session_state["honorarios_dataframes_iteration"]``.
 
     Returns:
-        Lista ordenada de tipos de comprobante; vacía si la
+        Tupla ``(tipos, ctas_ctes)``; ambas vacías si la
         colección está vacía (el ``selectbox`` del modal queda en
         modo escritura libre).
 
@@ -119,7 +119,7 @@ def get_referencias_honorarios(update_trigger: int = 0) -> list[str]:
         APIResponseError: Si la API retorna un error y no hay caché.
     """
     df = get_honorarios(selections=[], update_trigger=update_trigger)
-    return _valores_unicos(df, "tipo")
+    return _valores_unicos(df, "tipo"), _valores_unicos(df, "cta_cte")
 
 
 # --------------------------------------------------

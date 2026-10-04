@@ -43,6 +43,7 @@ class HonorarioReport(BaseModel):
     cta_cte: str
     tipo: str
     cuit: str
+    nombre_completo: str
     actividad: str
     partida: str
     importe_bruto: float

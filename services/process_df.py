@@ -103,6 +103,7 @@ def _parse_moneda(valor: object) -> float:
     except ValueError:
         return 0.0
 
+
 # --------------------------------------------------
 def _texto_limpio(valor: object) -> str:
     """
@@ -121,12 +122,12 @@ def _texto_limpio(valor: object) -> str:
     if valor is None:
         return ""
     if isinstance(valor, str):
-        return valor.strip()
+        return valor
     if pd.isna(valor):
         return ""
     if isinstance(valor, float) and valor.is_integer():
         return str(int(valor))
-    return str(valor).strip()
+    return str(valor)
 
 
 # --------------------------------------------------
@@ -168,9 +169,7 @@ def merge_informe_con_precarizados(
         return pd.DataFrame(), [], []
 
     df_inf: pd.DataFrame = df_informe.copy()
-    df_inf["_match_key"] = df_inf["nombre_completo"].apply(
-        normalize_name_for_match
-    )
+    df_inf["_match_key"] = df_inf["nombre_completo"].apply(normalize_name_for_match)
 
     # Padrón vacío: ningún agente puede resolverse.
     if df_precarizados.empty:
@@ -193,9 +192,7 @@ def merge_informe_con_precarizados(
         if columna not in df_pad.columns:
             df_pad[columna] = pd.NA
 
-    df_pad["_match_key"] = df_pad["nombre_completo"].apply(
-        normalize_name_for_match
-    )
+    df_pad["_match_key"] = df_pad["nombre_completo"].apply(normalize_name_for_match)
     # Un agente repetido en el padrón: nos quedamos con el primero.
     df_pad = df_pad.drop_duplicates(subset=["_match_key"], keep="first")
 
@@ -225,9 +222,6 @@ def merge_informe_con_precarizados(
 
     merged = merged.drop(columns=["_match_key"])
     return merged, sin_match, incompletos
-
-
-
 
 
 # --------------------------------------------------
@@ -350,7 +344,6 @@ def process_informe_por_destino(
     return resultado
 
 
-
 # --------------------------------------------------
 def construir_payload_honorarios(
     df_merged: pd.DataFrame,
@@ -410,6 +403,7 @@ def construir_payload_honorarios(
             "cta_cte": str(cta_cte),
             "tipo": str(tipo),
             "cuit": _texto_limpio(fila.get("cuit")),
+            "nombre_completo": _texto_limpio(fila.get("nombre_completo")),
             "actividad": _texto_limpio(fila.get("actividad")),
             "partida": _texto_limpio(fila.get("partida")),
         }
@@ -423,4 +417,3 @@ def construir_payload_honorarios(
         registros.append(registro)
 
     return registros
-
