@@ -149,14 +149,6 @@ def dataframe_honorarios_comprobantes(
             horizontal_alignment="center",
             gap="medium",
         ):
-            if button_selfadd("Autocarga", key=f"btn_selfadd_{key}", type="primary"):
-                # Suponiendo que tu archivo se llama pages/autocarga.py o similar
-                try:
-                    st.switch_page(
-                        "src/pages/autocarga/autocarga.py"
-                    )  # <--- Esta es la clave
-                except Exception as e:
-                    st.error(f"No se pudo encontrar la página de autocarga: {e}")
             if button_add("Agregar", key=f"btn_add_{key}"):
                 modal_honorarios(
                     key_prefix=f"add_honorario_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
@@ -184,12 +176,15 @@ def dataframe_honorarios_comprobantes(
                     form_data = df_filtrado.iloc[selected_row_index].to_dict()
                     # Disparamos el modal de confirmación
                     modal_delete_registro_gral(
-                        endpoint=f"{Endpoints.SLAVE_HONORARIOS.value}/delete_many/{str(form_data.get('id'))}",
+                        endpoint=f"{Endpoints.SLAVE_HONORARIOS.value}/delete_many/{str(form_data.get('nro_comprobante'))}",
                         desc_registro=str(form_data.get("nro_comprobante")),
                         session_state_update_key="honorarios_dataframes_iteration",
                         key_prefix=f"delete_honorarios_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                     )
-
+            if button_selfadd("Generar .xls", key=f"btn_selfadd_{key}", type="primary"):
+                st.session_state["honorarios_dataframes_iteration"] += 1
+                st.success("✅ Reporte generado con éxito.")
+                st.rerun()
     return event, df_filtrado
 
 
@@ -232,29 +227,29 @@ def honorarios_template(
     selections = []
 
     # 0. Lógica de Exportación
-    def download_file():
-        # Validamos filtros antes de proceder
-        if all(s[1] is not None for s in selections):
-            try:
-                # Limpiamos basura anterior antes de empezar el proceso pesado
-                if f"temp_file_{key}" in st.session_state:
-                    del st.session_state[f"temp_file_{key}"]
-                with st.spinner("Preparando archivos Excel..."):
-                    # Llamada a la API que devuelve StreamingResponse
-                    excel_binario = fetch_excel_stream(
-                        f"{Endpoints.SLAVE_HONORARIOS.value}/export",
-                        params_preparation(selections, filtro_avanzado),
-                    )
+    # def download_file():
+    #     # Validamos filtros antes de proceder
+    #     if all(s[1] is not None for s in selections):
+    #         try:
+    #             # Limpiamos basura anterior antes de empezar el proceso pesado
+    #             if f"temp_file_{key}" in st.session_state:
+    #                 del st.session_state[f"temp_file_{key}"]
+    #             with st.spinner("Preparando archivos Excel..."):
+    #                 # Llamada a la API que devuelve StreamingResponse
+    #                 excel_binario = fetch_excel_stream(
+    #                     f"{Endpoints.SLAVE_HONORARIOS.value}/export",
+    #                     params_preparation(selections, filtro_avanzado),
+    #                 )
 
-                    if excel_binario:
-                        # IMPORTANTE: Como st.download_button recarga la página,
-                        # a veces es mejor usar un link o guardarlo en session_state
-                        st.session_state[f"temp_file_{key}"] = excel_binario
-                        st.success("✅ Archivo generado con éxito.")
-                        st.rerun()
+    #                 if excel_binario:
+    #                     # IMPORTANTE: Como st.download_button recarga la página,
+    #                     # a veces es mejor usar un link o guardarlo en session_state
+    #                     st.session_state[f"temp_file_{key}"] = excel_binario
+    #                     st.success("✅ Archivo generado con éxito.")
+    #                     st.rerun()
 
-            except Exception as e:
-                st.error(f"Error al exportar: {e}")
+    #         except Exception as e:
+    #             st.error(f"Error al exportar: {e}")
 
     # 1. Renderizar Filtros
     # --- Filtros (Estado local del componente) ---
@@ -275,20 +270,20 @@ def honorarios_template(
         )
 
         # Aquí podrías integrar tu logic de exportación
-        if f"temp_file_{key}" not in st.session_state:
-            if button_export("Exportar a Excel", key=f"button_export_{key}"):
-                download_file()
-        else:
-            # Si hay archivo, el botón "Exportar" desaparece y aparece el de "Descargar"
-            st.download_button(
-                label="📥 GUARDAR EXCEL",
-                data=st.session_state[f"temp_file_{key}"],
-                file_name=f"reporte_{key}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=f"btn_dl_{key}",
-                type="primary",  # Lo ponemos en color para que resalte
-                on_click=lambda: st.session_state.pop(f"temp_file_{key}"),
-            )
+        # if f"temp_file_{key}" not in st.session_state:
+        #     if button_export("Exportar a Excel", key=f"button_export_{key}"):
+        #         download_file()
+        # else:
+        #     # Si hay archivo, el botón "Exportar" desaparece y aparece el de "Descargar"
+        #     st.download_button(
+        #         label="📥 GUARDAR EXCEL",
+        #         data=st.session_state[f"temp_file_{key}"],
+        #         file_name=f"reporte_{key}.xlsx",
+        #         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        #         key=f"btn_dl_{key}",
+        #         type="primary",  # Lo ponemos en color para que resalte
+        #         on_click=lambda: st.session_state.pop(f"temp_file_{key}"),
+        #     )
 
     # 2. Validar que no haya filtros vacíos
     if any(not s[1] for s in selections):

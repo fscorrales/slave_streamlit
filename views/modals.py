@@ -248,7 +248,10 @@ def modal_precarizado(
         key=f"{key_prefix}_actividad",
         placeholder="Escriba o elija una Actividad.",
         accept_new_options=True,
-        help="Actividad/estructura presupuestaria del agente.",
+        help=(
+            "Actividad/estructura presupuestaria del agente. "
+            "Formato requerido: 00-00-00-00 (ej: 01-00-00-04)."
+        ),
     )
 
     partida = col_partida.selectbox(
@@ -281,16 +284,25 @@ def modal_precarizado(
             # 1. Validación de datos
             errores: list[str] = []
             nombre_limpio = _a_texto(nombre_completo)
-            actividad_limpia = _a_texto(actividad)
-            partida_limpia = _a_texto(partida)
-            cuit_limpio = _a_texto(cuit)
+            actividad_limpia = _a_texto(actividad).strip()
+            partida_limpia = _a_texto(partida).strip()
+            cuit_limpio = _a_texto(cuit).strip()
 
             if not nombre_limpio:
                 errores.append("Debe ingresar el Nombre del Agente.")
             if not actividad_limpia:
                 errores.append("Debe indicar la Actividad.")
+            elif not re.fullmatch(r"\d{2}-\d{2}-\d{2}-\d{2}", actividad_limpia):
+                errores.append(
+                    "La Actividad debe tener el formato 00-00-00-00 "
+                    "(4 grupos de 2 dígitos separados por guiones)."
+                )
             if not partida_limpia:
                 errores.append("Debe indicar la Partida Presupuestaria.")
+            elif not re.fullmatch(r"\d{3}", partida_limpia):
+                errores.append(
+                    "La Partida Presupuestaria debe contener exactamente 3 dígitos."
+                )
             if cuit_limpio and not re.fullmatch(r"\d{11}", cuit_limpio):
                 errores.append(
                     "El CUIT debe contener exactamente 11 dígitos (sin guiones)."
@@ -478,14 +490,10 @@ def modal_honorarios(
         nro_original = _a_texto((datos_carga or {}).get("nro_comprobante"))
         if "nro_comprobante" in df_honorarios.columns:
             df_docs = df_honorarios[
-                df_honorarios["nro_comprobante"].astype(str).str.strip()
-                == nro_original
+                df_honorarios["nro_comprobante"].astype(str).str.strip() == nro_original
             ].copy()
         if df_docs.empty:
-            st.error(
-                f"No se encontraron las líneas del comprobante "
-                f"`{nro_original}`."
-            )
+            st.error(f"No se encontraron las líneas del comprobante `{nro_original}`.")
             _barra_cancelar()
             return
 
@@ -503,7 +511,7 @@ def modal_honorarios(
             "elimínelo con *Borrar* y vuélvalo a cargar."
         )
         with st.expander("Líneas actuales del comprobante"):
-            st.dataframe(df_docs.head(15), width="stretch")
+            st.dataframe(df_docs, width="stretch")
         st.markdown("#### Carátula")
     else:
         # ═══════════════ PASO 1 · INFORME (GATE) ═══════════════
@@ -528,9 +536,7 @@ def modal_honorarios(
             return
 
         # ``getvalue()`` no consume el stream: re-leer en cada rerun.
-        df_informe = process_informe_por_destino(
-            BytesIO(uploaded_file.getvalue())
-        )
+        df_informe = process_informe_por_destino(BytesIO(uploaded_file.getvalue()))
         if df_informe.empty:
             st.error(
                 "❌ No se pudo interpretar el CSV. Verifique que sea el "
@@ -690,9 +696,7 @@ def modal_honorarios(
             f"`{Endpoints.SLAVE_HONORARIOS.value}/add_many/"
             f"{quote(nro_comprobante, safe='') if nro_comprobante else '...'}"
         )
-        st.caption(
-            f"Se enviarán **{len(df_merged)}** documentos a {endpoint_desc}."
-        )
+        st.caption(f"Se enviarán **{len(df_merged)}** documentos a {endpoint_desc}.")
 
     st.markdown("---")
     with st.container(
@@ -707,9 +711,7 @@ def modal_honorarios(
         if button_submit(etiqueta, key=f"{key_prefix}_btn_submit"):
             errores: list[str] = []
             if not nro_valido:
-                errores.append(
-                    "El Nro. de comprobante debe tener entre 1 y 5 dígitos."
-                )
+                errores.append("El Nro. de comprobante debe tener entre 1 y 5 dígitos.")
             if not fecha:
                 errores.append("Debe indicar la Fecha.")
             if not cta_limpia:
@@ -741,15 +743,13 @@ def modal_honorarios(
                 # Validación estricta contra HonorariosUpdate: si algo
                 # falla, NO se envía nada a la API.
                 try:
-                    payload: dict[str, Any] = (
-                        construir_payload_actualizacion_caratula(
-                            nro_comprobante=nro_comprobante,
-                            ejercicio=ejercicio,
-                            mes=mes,
-                            fecha=fecha_dt,
-                            tipo=tipo_limpio,
-                            cta_cte=cta_limpia,
-                        )
+                    payload: dict[str, Any] = construir_payload_actualizacion_caratula(
+                        nro_comprobante=nro_comprobante,
+                        ejercicio=ejercicio,
+                        mes=mes,
+                        fecha=fecha_dt,
+                        tipo=tipo_limpio,
+                        cta_cte=cta_limpia,
                     )
                 except ValidationError as exc:
                     st.error(f"⚠️ Los datos no cumplen HonorariosUpdate: {exc}")
@@ -762,9 +762,7 @@ def modal_honorarios(
                     f"{quote(nro_original, safe='')}"
                 )
 
-                with st.spinner(
-                    f"Actualizando carátula de {len(df_docs)} línea(s)..."
-                ):
+                with st.spinner(f"Actualizando carátula de {len(df_docs)} línea(s)..."):
                     try:
                         # token explícito: el ContextVar no se propaga
                         # en diálogos.
