@@ -42,12 +42,12 @@ def normalize_name_for_match(name: object) -> str:
 def build_retenciones_payload(data: dict) -> dict:
     # Mapeo de campos del objeto a códigos contables de ICARO
     mapeo_codigos = {
-        "iibb": "110",
-        "sellos": "111",
-        "gcias": "113",
-        "suss": "114",
-        "lp": "112",
-        "invico": "337",
+        "iibb": "101",
+        "sellos": "102",
+        "lp": "104",
+        "embargo": "255",
+        "descuento": "341",
+        "seguro": "413",
     }
 
     payload_items = []

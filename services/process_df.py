@@ -50,22 +50,23 @@ from utils.transform_data import normalize_name_for_match
 #      ``Monto - (32 + 33 + 34 + 38 + 39) == pos40`` en todas
 #      las filas), NO un descuento. No se mapea al modelo.
 #
-# ``descuento``, ``mutual`` y ``embargo`` no existen en el
+# ``mutual`` y ``embargo`` no existen en el
 # reporte -> se inicializan en 0.0 (campos no ``Optional``).
 # --------------------------------------------------
 _MAPEO_COLUMNAS: dict[str, int] = {
     "nombre_completo": 28,  # Proveedor
     "importe_bruto": 31,  # Monto Imponible
-    "sellos": 34,  # Sellos
-    "lp": 35,  # L. Pago
-    "iibb": 36,  # IB
-    "otras_retenciones": 37,  # O. Ret.
-    "anticipo": 38,  # Antic.
-    "seguro": 39,  # Seguro
+    "sellos": 32,  # Sellos
+    "lp": 33,  # L. Pago
+    "iibb": 34,  # IB
+    "otras_retenciones": 36,  # O. Ret.
+    "anticipo": 37,  # Antic.
+    "seguro": 38,  # Seguro
+    "descuento": 39,  # No existe en el reporte -> 0.0
 }
 
 # Campos del modelo sin contraparte en el reporte -> 0.0
-_CAMPOS_SIN_DATO: tuple[str, ...] = ("descuento", "mutual", "embargo")
+_CAMPOS_SIN_DATO: tuple[str, ...] = ("mutual", "embargo")
 
 # Título que identifica al reporte esperado (posición 1).
 _TITULO_ESPERADO: str = "Resumen de Pagos por Destino"
