@@ -9,6 +9,7 @@ from utils.exceptions import (
     AuthenticationError,
     ValidationError,
 )
+from utils.export_excel import build_comprobante_xlsx
 from utils.handling_files import read_csv_file
 from utils.print_tables import print_rich_table
 from utils.transform_data import build_retenciones_payload, formato_moneda_ar
@@ -24,5 +25,6 @@ __all__ = [
     "AuthenticationError",
     "ValidationError",
     "build_retenciones_payload",
+    "build_comprobante_xlsx",
     "formato_moneda_ar",
 ]

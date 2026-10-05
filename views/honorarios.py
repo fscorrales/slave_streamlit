@@ -22,6 +22,7 @@ from utils import (
     APIConnectionError,
     APIResponseError,
     Endpoints,
+    build_comprobante_xlsx,
     build_retenciones_payload,
     formato_moneda_ar,
 )
@@ -179,10 +180,91 @@ def dataframe_honorarios_comprobantes(
                         session_state_update_key="honorarios_dataframes_iteration",
                         key_prefix=f"delete_honorarios_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                     )
-            if button_export("Generar .xls", key=f"btn_export_{key}", type="primary"):
-                st.session_state["honorarios_dataframes_iteration"] += 1
-                st.success("✅ Reporte generado con éxito.")
-                st.rerun()
+            if button_export("Generar .xlsx", key=f"btn_export_{key}", type="primary"):
+                if len(event.selection.rows) > 0:
+                    selected_row_index = event.selection.rows[0]
+                    main_data = df_filtrado.iloc[selected_row_index].to_dict()
+                    selected_id = main_data.get("nro_comprobante")
+                    # df_filtrado está agrupado por comprobante y no conserva
+                    # las columnas de detalle, por eso se usa el df sin agrupar.
+                    df_imp = df_comprobantes[
+                        df_comprobantes["nro_comprobante"] == selected_id
+                    ]
+                    df_imp = (
+                        df_imp.groupby(["actividad", "partida"])[["importe_bruto"]]
+                        .sum()
+                        .reset_index()
+                    )
+                    df_imp = df_imp.sort_values(
+                        by=["actividad", "partida"], ascending=True
+                    ).reset_index(drop=True)
+                    df_suma = (
+                        df_comprobantes[
+                            df_comprobantes["nro_comprobante"] == selected_id
+                        ][
+                            [
+                                "iibb",
+                                "lp",
+                                "sellos",
+                                "seguro",
+                                "otras_retenciones",
+                                "anticipo",
+                                "descuento",
+                                "mutual",
+                                "embargo",
+                                "importe_bruto",
+                            ]
+                        ]
+                        .sum()
+                        .to_dict()
+                    )
+                    payload_retenciones = build_retenciones_payload(df_suma)
+                    # Extraemos los datos crudos
+                    lista_ret = payload_retenciones.get("retenciones", [])
+                    # Ordenamos la lista de retenciones por el código (convertido a entero)
+                    lista_ordenada = sorted(lista_ret, key=lambda x: int(x["codigo"]))
+                    df_ret = pd.DataFrame(lista_ordenada)
+                    # Guardamos el .xlsx en session_state: st.download_button
+                    # recarga la página y descarta el estado del botón
+                    # "Generar", así el archivo queda disponible hasta que se
+                    # descargue o cambie la selección.
+                    excel_bytes = build_comprobante_xlsx(main_data, df_imp, df_ret)
+                    st.session_state[f"temp_file_{key}"] = {
+                        "data": excel_bytes,
+                        "file_name": f"comprobante_{selected_id}.xlsx",
+                        "selected_id": selected_id,
+                    }
+                    st.success("✅ Archivo generado con éxito. Presione GUARDAR EXCEL.")
+                else:
+                    st.warning("Seleccione un comprobante antes de generar el archivo.")
+
+            temp_file = st.session_state.get(f"temp_file_{key}")
+            if temp_file is not None:
+                seleccion_actual = None
+                if len(event.selection.rows) > 0:
+                    seleccion_actual = df_filtrado.iloc[event.selection.rows[0]][
+                        "nro_comprobante"
+                    ]
+                if (
+                    seleccion_actual is None
+                    or seleccion_actual == temp_file["selected_id"]
+                ):
+                    st.download_button(
+                        label="📥 GUARDAR EXCEL",
+                        data=temp_file["data"],
+                        file_name=temp_file["file_name"],
+                        mime=(
+                            "application/"
+                            "vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        ),
+                        key=f"btn_dl_{key}",
+                        type="primary",
+                        on_click=lambda: st.session_state.pop(f"temp_file_{key}", None),
+                    )
+                else:
+                    # La selección cambió: el archivo generado ya no corresponde.
+                    st.session_state.pop(f"temp_file_{key}", None)
+
     return event, df_filtrado
 
 
