@@ -178,7 +178,7 @@ def dataframe_honorarios_comprobantes(
                     form_data = df_filtrado.iloc[selected_row_index].to_dict()
                     # Disparamos el modal de confirmación
                     modal_delete_registro_gral(
-                        endpoint=f"{Endpoints.SLAVE_HONORARIOS.value}/delete_one/{str(form_data.get('id'))}",
+                        endpoint=f"{Endpoints.SLAVE_HONORARIOS.value}/delete_many/{str(form_data.get('id'))}",
                         desc_registro=str(form_data.get("nro_comprobante")),
                         session_state_update_key="honorarios_dataframes_iteration",
                         key_prefix=f"delete_honorarios_{datetime.now().strftime('%Y%m%d%H%M%S')}",
