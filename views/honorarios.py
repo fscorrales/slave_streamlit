@@ -13,12 +13,11 @@ from components import (
     button_delete,
     button_edit,
     button_export,
-    button_selfadd,
     dataframe,
     multiselect_filter,
     text_input_advance_filter,
 )
-from services import fetch_excel_stream, get_ejercicios_list, get_honorarios
+from services import get_ejercicios_list, get_honorarios
 from utils import (
     APIConnectionError,
     APIResponseError,
@@ -30,7 +29,6 @@ from views import (
     dataframe_with_buttons,
     modal_delete_registro_gral,
     modal_honorarios,
-    params_preparation,
 )
 
 REPORTE = "honorarios"
@@ -181,7 +179,7 @@ def dataframe_honorarios_comprobantes(
                         session_state_update_key="honorarios_dataframes_iteration",
                         key_prefix=f"delete_honorarios_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                     )
-            if button_selfadd("Generar .xls", key=f"btn_selfadd_{key}", type="primary"):
+            if button_export("Generar .xls", key=f"btn_export_{key}", type="primary"):
                 st.session_state["honorarios_dataframes_iteration"] += 1
                 st.success("✅ Reporte generado con éxito.")
                 st.rerun()
