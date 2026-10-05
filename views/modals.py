@@ -19,9 +19,12 @@ from services.data_fetcher import (
     get_referencias_honorarios,
 )
 from services.process_df import (
+    componer_nro_comprobante,
+    construir_payload_actualizacion_caratula,
     construir_payload_honorarios,
     merge_informe_con_precarizados,
     process_informe_por_destino,
+    separar_nro_comprobante,
 )
 from utils.context import sync_session_token
 from utils.endpoints import Endpoints
@@ -111,6 +114,41 @@ def _a_texto(valor: Any) -> str:
         # coincidir con el valor canónico "354" de las referencias.
         return str(int(valor))
     return str(valor)
+
+
+# --------------------------------------------------
+def _a_fecha(valor: Any) -> date | None:
+    """
+    Convierte un escalar de fecha a ``datetime.date``.
+
+    Acepta ``datetime``, ``date``, ``pd.Timestamp``/``NaT`` y strings
+    en los formatos habituales de la API (``"2026-09-23"``,
+    ``"2026-09-23T00:00:00"``, ``"23/09/2026"``).
+
+    Args:
+        valor: Cualquier escalar proveniente de una fila.
+
+    Returns:
+        ``date`` o ``None`` si el valor es nulo o no reconocido (para
+        que el widget caiga en su default).
+    """
+    if valor is None:
+        return None
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    if pd.isna(valor):
+        return None
+    texto: str = str(valor).strip()
+    if not texto:
+        return None
+    for formato in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(texto, formato).date()
+        except ValueError:
+            continue
+    return None
 
 
 # --- MODAL: AGREGAR / EDITAR FACTURERO (AGENTE) ---
@@ -326,41 +364,68 @@ def modal_precarizado(
                         st.error(f"❌ Ocurrió un error inesperado: {exc}")
 
 
-# --- MODAL: AGREGAR COMPROBANTE DE HONORARIOS ---
-@st.dialog("Agregar Comprobantes de HONORARIOS", width="large")
+# --- MODAL: AGREGAR / EDITAR COMPROBANTE DE HONORARIOS ---
+@st.dialog("Comprobante de HONORARIOS", width="large")
 def modal_honorarios(
     key_prefix: str,
+    datos_carga: dict[str, Any] | None = None,
+    es_edicion: bool = False,
+    df_honorarios: pd.DataFrame | None = None,
     session_state_update_key: str = "honorarios_dataframes_iteration",
 ) -> None:
     """
-    Modal para dar de alta un comprobante de honorarios y sus líneas
-    en la colección ``slave_honorarios``
-    (``POST /slave/honorarios/add_many/{nro_comprobante}``).
+    Modal para dar de alta **o editar** un comprobante de honorarios
+    y sus líneas en la colección ``slave_honorarios``.
 
-    Flujo secuencial **sin tabs**, deliberadamente:
+    **Dos modos:**
+
+    - **Alta** (``es_edicion=False``): ``POST /slave/honorarios/
+      add_many/{nro_comprobante}``.
+    - **Edición** (``es_edicion=True``): sólo se modifica la
+      **carátula** de un comprobante existente (fecha, nro de
+      comprobante, cta_cte y tipo) mediante **un único**
+      ``PUT .../update_many/{nro_actual}`` validado contra
+      ``HonorariosUpdate``. La *path* lleva el nro **actual** (es el
+      identificador) y el payload el nro **nuevo**, de modo que el
+      comprobante se puede renumerar. Los campos de línea (importes,
+      CUIT, actividad, partida) **se conservan sin cambios**: para
+      reemplazarlos hay que eliminar el comprobante y volver a
+      cargarlo.
+
+    Flujo de **alta**, secuencial y **sin tabs** (las pestañas no se
+    pueden bloquear y el usuario podría saltarse el gate):
 
         1. **Paso 1 (gate):** upload del CSV *Resumen de Pagos por
            Destino* -> ``process_informe_por_destino()`` -> merge con
-           ``get_precarizados()`` para resolver
-           ``cuit``/``actividad``/``partida``.
-           Si algún agente no matchea o viene incompleto, el proceso
-           **se corta ahí**: el Paso 2 nunca se renderiza, por lo que
-           **no se pierde ningún dato** que el usuario hubiera tipeado.
-        2. **Paso 2:** fecha, nro de comprobante, cta_cte y tipo.
-           De la fecha se derivan ``ejercicio`` y ``mes``; del año,
-           los dos últimos dígitos para armar ``"00000/aa"``.
-        3. **Paso 3:** confirmación y envío del payload validado
-           contra ``HonorarioReport``.
+           ``get_precarizados()``. Si algún agente no matchea o viene
+           incompleto, el proceso **se corta ahí**: el Paso 2 nunca se
+           renderiza y **no se pierde ningún dato**.
+        2. **Paso 2:** fecha, nro de comprobante, cta_cte y tipo. De
+           la fecha se derivan ``ejercicio`` y ``mes``; del año, los
+           dos últimos dígitos para armar ``"00000/aa"``.
+        3. **Confirmación:** envío del payload validado contra
+           ``HonorarioReport``.
 
-    Se descartó ``st.tabs`` porque las pestañas no se pueden bloquear:
-    el usuario podría saltar al Paso 2 sin haber validado el padrón.
+    **Duplicados:** se hace un *pre-check* en el front usando los
+    honorarios ya cargados en la vista (sin llamada extra a la API).
+    Es *best-effort* — sólo ve lo que está filtrado — por lo que la
+    autoridad final sigue siendo el Back, cuyo error se muestra si
+    rechaza la carga.
 
     Args:
         key_prefix: Prefijo único para las keys de los widgets (con
             timestamp con microsegundos, igual que ``modal_precarizado``).
+        datos_carga: Fila a editar (``df.iloc[i].to_dict()`` de la
+            grilla agrupada); ``None`` en modo alta.
+        es_edicion: ``True`` habilita el modo edición (carátula) y
+            deshabilita el Paso 1 de carga de CSV.
+        df_honorarios: DataFrame **sin agrupar** de la colección
+            (con los ``id`` de cada línea). Sólo es necesario en modo
+            edición; de ``None`` el modal informa y no permite
+            continuar.
         session_state_update_key: Clave de ``st.session_state`` a
             incrementar tras guardar, para refrescar la grilla de
-            honorarios (y las referencias de ``tipo``).
+            honorarios (y las referencias de ``tipo``/``cta_cte``).
     """
     # CRÍTICO: ``@st.dialog`` corre en un contexto de script separado
     # donde los ``ContextVar`` del token NO se heredan.
@@ -375,97 +440,183 @@ def modal_honorarios(
             ):
                 st.rerun()
 
-    # ═══════════════ PASO 1 · INFORME (GATE) ═══════════════
-    st.markdown("#### Paso 1 · Informe por Destino")
-    st.caption(
-        "Cargue el CSV del *Resumen de Pagos por Destino*. El formulario "
-        "se habilita únicamente si **todos** los agentes figuran en el "
-        "padrón de Precarizados con CUIT, Actividad y Partida."
-    )
-
-    uploaded_file = st.file_uploader(
-        "Archivo CSV",
-        type=["csv"],
-        key=f"{key_prefix}_upload_informe",
-        help="Exportado del Sistema de Gestión Financiera con título 'Resumen de Pagos por Destino'.",
-    )
-
-    if uploaded_file is None:
-        st.info("⏳ Cargue el archivo CSV para continuar.")
-        _barra_cancelar()
-        return
-
-    # ``getvalue()`` no consume el stream: permite re-leer en cada rerun.
-    df_informe = process_informe_por_destino(BytesIO(uploaded_file.getvalue()))
-    if df_informe.empty:
-        st.error(
-            "❌ No se pudo interpretar el CSV. Verifique que sea el reporte "
-            "'Resumen de Pagos por Destino' y que no esté vacío."
-        )
-        _barra_cancelar()
-        return
-
+    # ═══════════ PREPARACIÓN COMÚN (ambos modos) ═══════════
     update_trigger = int(st.session_state.get(session_state_update_key, 0))
-    try:
-        df_precarizados = get_precarizados(update_trigger=update_trigger)
-    except AppBaseException as exc:
-        st.error(f"⚠️ No se pudo obtener el padrón de Precarizados: {exc}")
-        _barra_cancelar()
-        return
-
-    df_merged, sin_match, incompletos = merge_informe_con_precarizados(
-        df_informe, df_precarizados
-    )
-
-    # ── GATE: agentes faltantes => se corta el proceso aquí ──
-    if sin_match or incompletos:
-        if sin_match:
-            st.error(
-                f"🚫 **{len(sin_match)} agente(s) NO figuran en el padrón de "
-                "Precarizados.** Deben darse de alta antes de continuar:"
-            )
-            for nombre in sin_match:
-                st.markdown(f"- `{nombre}`")
-        if incompletos:
-            st.error(
-                f"🚫 **{len(incompletos)} agente(s) figuran con datos "
-                "incompletos** (falta CUIT, Actividad o Partida). Deben "
-                "completarse antes de continuar:"
-            )
-            for nombre in incompletos:
-                st.markdown(f"- `{nombre}`")
-
-        st.warning(
-            "**El proceso se detiene aquí.** Cancele, cargue esos agentes "
-            "desde la vista *Precarizados* y vuelva a intentarlo. Al reabrir "
-            "este modal sólo deberá volver a subir el CSV."
-        )
-        _barra_cancelar()
-        return
-
-    st.success(
-        f"✅ **{len(df_merged)}** registros leídos · todos con "
-        "CUIT / Actividad / Partida resueltos."
-    )
-    with st.expander("Vista previa de los registros a cargar"):
-        st.dataframe(df_merged.head(15), width="stretch")
-
-    # ═══════════════ PASO 2 · DATOS DEL COMPROBANTE ═══════════════
-    st.markdown("#### Paso 2 · Datos del Comprobante")
 
     try:
         tipos, ctas_ctes = get_referencias_honorarios(update_trigger)
     except AppBaseException as exc:
-        # No silenciamos: informamos y dejamos el selectbox en modo
+        # No silenciamos: informamos y dejamos los selectbox en modo
         # escritura libre (accept_new_options=True) como fallback.
         st.warning(
-            f"⚠️ No se pudieron cargar los tipos de comprobante y/o las cuentas corrientes: {exc}"
+            f"⚠️ No se pudieron cargar los tipos de comprobante y/o las "
+            f"cuentas corrientes: {exc}"
         )
         tipos, ctas_ctes = [], []
+
+    # Pre-check de duplicados: usa los honorarios ya cargados en la
+    # vista (gratis, sin llamada extra). Es best-effort porque sólo ve
+    # lo que está filtrado; la autoridad final es el Back.
+    existentes: set[str] = set()
+    if (
+        df_honorarios is not None
+        and not df_honorarios.empty
+        and "nro_comprobante" in df_honorarios.columns
+    ):
+        existentes = {
+            _a_texto(v) for v in df_honorarios["nro_comprobante"].unique()
+        } - {""}
+
+    # ── MODO EDICIÓN: resolver las líneas del comprobante ──
+    nro_original: str = ""
+    df_docs = pd.DataFrame()
+    if es_edicion:
+        if df_honorarios is None or df_honorarios.empty:
+            st.error("No hay datos de honorarios disponibles para editar.")
+            _barra_cancelar()
+            return
+        nro_original = _a_texto((datos_carga or {}).get("nro_comprobante"))
+        if "nro_comprobante" in df_honorarios.columns:
+            df_docs = df_honorarios[
+                df_honorarios["nro_comprobante"].astype(str).str.strip()
+                == nro_original
+            ].copy()
+        if df_docs.empty:
+            st.error(
+                f"No se encontraron las líneas del comprobante "
+                f"`{nro_original}`."
+            )
+            _barra_cancelar()
+            return
+
+    # ═══════════ BLOQUE SUPERIOR (según modo) ═══════════
+    df_merged = pd.DataFrame()
+    if es_edicion:
+        st.markdown("#### Comprobante a editar")
+        st.caption(
+            f"Se actualizará la **carátula** del comprobante "
+            f"`{nro_original}` (**{len(df_docs)}** líneas) en una sola "
+            "operación. Puede cambiar fecha, nro de comprobante, "
+            "cta_cte y tipo; los importes, CUIT, actividad y partida "
+            "se conservan sin cambios.\n\n"
+            "ℹ️ Para **reemplazar las líneas** del comprobante, "
+            "elimínelo con *Borrar* y vuélvalo a cargar."
+        )
+        with st.expander("Líneas actuales del comprobante"):
+            st.dataframe(df_docs.head(15), width="stretch")
+        st.markdown("#### Carátula")
+    else:
+        # ═══════════════ PASO 1 · INFORME (GATE) ═══════════════
+        st.markdown("#### Paso 1 · Informe por Destino")
+        st.caption(
+            "Cargue el CSV del *Resumen de Pagos por Destino*. El "
+            "formulario se habilita únicamente si **todos** los agentes "
+            "figuran en el padrón de Precarizados con CUIT, Actividad y "
+            "Partida."
+        )
+
+        uploaded_file = st.file_uploader(
+            "Archivo CSV",
+            type=["csv"],
+            key=f"{key_prefix}_upload_informe",
+            help="Exportado del Sistema de Gestión Financiera con título 'Resumen de Pagos por Destino'.",
+        )
+
+        if uploaded_file is None:
+            st.info("⏳ Cargue el archivo CSV para continuar.")
+            _barra_cancelar()
+            return
+
+        # ``getvalue()`` no consume el stream: re-leer en cada rerun.
+        df_informe = process_informe_por_destino(
+            BytesIO(uploaded_file.getvalue())
+        )
+        if df_informe.empty:
+            st.error(
+                "❌ No se pudo interpretar el CSV. Verifique que sea el "
+                "reporte 'Resumen de Pagos por Destino' y que no esté vacío."
+            )
+            _barra_cancelar()
+            return
+
+        try:
+            df_precarizados = get_precarizados(update_trigger=update_trigger)
+        except AppBaseException as exc:
+            st.error(f"⚠️ No se pudo obtener el padrón de Precarizados: {exc}")
+            _barra_cancelar()
+            return
+
+        df_merged, sin_match, incompletos = merge_informe_con_precarizados(
+            df_informe, df_precarizados
+        )
+
+        # ── GATE: agentes faltantes => se corta el proceso aquí ──
+        if sin_match or incompletos:
+            if sin_match:
+                st.error(
+                    f"🚫 **{len(sin_match)} agente(s) NO figuran en el "
+                    "padrón de Precarizados.** Deben darse de alta antes "
+                    "de continuar:"
+                )
+                for nombre in sin_match:
+                    st.markdown(f"- `{nombre}`")
+            if incompletos:
+                st.error(
+                    f"🚫 **{len(incompletos)} agente(s) figuran con datos "
+                    "incompletos** (falta CUIT, Actividad o Partida). "
+                    "Deben completarse antes de continuar:"
+                )
+                for nombre in incompletos:
+                    st.markdown(f"- `{nombre}`")
+
+            st.warning(
+                "**El proceso se detiene aquí.** Cancele, cargue esos "
+                "agentes desde la vista *Precarizados* y vuelva a "
+                "intentarlo. Al reabrir este modal sólo deberá volver a "
+                "subir el CSV."
+            )
+            _barra_cancelar()
+            return
+
+        st.success(
+            f"✅ **{len(df_merged)}** registros leídos · todos con "
+            "CUIT / Actividad / Partida resueltos."
+        )
+        with st.expander("Vista previa de los registros a cargar"):
+            st.dataframe(df_merged.head(15), width="stretch")
+
+        st.markdown("#### Paso 2 · Datos del Comprobante")
+    # ═══════════ WIDGETS DE CARÁTULA (compartidos) ═══════════
+    # Valores iniciales según modo. Usamos ``setdefault`` (patrón de
+    # ``modal_precarizado``) para poder pre-cargar la carátula en
+    # edición sin pisar la sesión.
+    if es_edicion:
+        fecha_inicial = _a_fecha((datos_carga or {}).get("fecha")) or date.today()
+        nro_inicial = separar_nro_comprobante(nro_original)
+        cta_inicial = ""
+        if not df_docs.empty and "cta_cte" in df_docs.columns:
+            cta_inicial = _a_texto(df_docs["cta_cte"].iloc[0])
+        tipo_inicial = _a_texto((datos_carga or {}).get("tipo")) or None
+        # El valor previo debe estar siempre entre las opciones.
+        if cta_inicial and cta_inicial not in ctas_ctes:
+            ctas_ctes = [cta_inicial, *ctas_ctes]
+        if tipo_inicial and tipo_inicial not in tipos:
+            tipos = [tipo_inicial, *tipos]
+    else:
+        # Alta: conservamos el comportamiento previo del modal.
+        fecha_inicial = date.today()
+        nro_inicial = ""
+        cta_inicial = ctas_ctes[0] if ctas_ctes else None
+        tipo_inicial = tipos[0] if tipos else None
+
+    st.session_state.setdefault(f"{key_prefix}_fecha", fecha_inicial)
+    st.session_state.setdefault(f"{key_prefix}_nro", nro_inicial)
+    st.session_state.setdefault(f"{key_prefix}_cta_cte", cta_inicial)
+    st.session_state.setdefault(f"{key_prefix}_tipo", tipo_inicial)
+
     col_fecha, col_nro = st.columns(2)
     fecha = col_fecha.date_input(
         "Fecha del comprobante",
-        value=date.today(),
         key=f"{key_prefix}_fecha",
         format="DD/MM/YYYY",
     )
@@ -493,29 +644,55 @@ def modal_honorarios(
     )
 
     # ── Datos derivados de la fecha ──
+    # Mismos cálculos en alta y edición: el nro se arma con el año de
+    # la fecha. En edición, ``nro_comprobante`` es el NUEVO número que
+    # viaja en el payload, mientras la path de ``update_many`` lleva
+    # ``nro_original`` (el actual, identificador del comprobante).
     ejercicio: int = fecha.year
     mes: str = fecha.strftime("%m/%Y")
-    nro_limpio: str = nro_base.strip()
+    nro_limpio: str = (nro_base or "").strip()
     nro_valido: bool = bool(re.fullmatch(r"\d{1,5}", nro_limpio))
-    nro_comprobante: str = (
-        f"{nro_limpio.zfill(5)}/{str(ejercicio)[-2:]}" if nro_valido else ""
-    )
+    nro_comprobante: str = componer_nro_comprobante(nro_limpio, ejercicio)
     # selectbox sin selección devuelve None; ``str(None)`` sería
     # "None" (truthy), por eso se normaliza ANTES de validar.
     tipo_limpio: str = "" if tipo is None else str(tipo).strip()
+    cta_limpia: str = "" if cta_cte is None else str(cta_cte).strip()
 
     st.caption(
         f"**Ejercicio:** `{ejercicio}` · **Mes:** `{mes}` · "
         f"**Nro. comprobante:** `{nro_comprobante or '—'}`"
+        + (
+            f" · *(actual: `{nro_original}`)*"
+            if es_edicion and nro_comprobante != nro_original
+            else ""
+        )
     )
 
-    # ═══════════════ PASO 3 · CONFIRMACIÓN ═══════════════
-    st.markdown("#### Paso 3 · Confirmación")
-    endpoint: str = (
-        f"{Endpoints.SLAVE_HONORARIOS.value}/add_many/"
-        f"{quote(nro_comprobante, safe='') if nro_comprobante else '...'}"
-    )
-    st.caption(f"Se enviarán **{len(df_merged)}** documentos a `{endpoint}`.")
+    # ═══════════ CONFIRMACIÓN ═══════════
+    st.markdown("#### Confirmación")
+    if es_edicion:
+        endpoint_desc: str = (
+            f"`{Endpoints.SLAVE_HONORARIOS.value}/update_many/"
+            f"{quote(nro_original, safe='')}`"
+        )
+        nuevo_txt: str = (
+            f" y **renumerará** a `{nro_comprobante}`"
+            if nro_comprobante != nro_original
+            else ""
+        )
+        st.caption(
+            f"Se actualizará la carátula de **{len(df_docs)}** línea(s) "
+            f"del comprobante `{nro_original}` con **un solo `PUT`** a "
+            f"{endpoint_desc}{nuevo_txt}."
+        )
+    else:
+        endpoint_desc = (
+            f"`{Endpoints.SLAVE_HONORARIOS.value}/add_many/"
+            f"{quote(nro_comprobante, safe='') if nro_comprobante else '...'}"
+        )
+        st.caption(
+            f"Se enviarán **{len(df_merged)}** documentos a {endpoint_desc}."
+        )
 
     st.markdown("---")
     with st.container(
@@ -526,16 +703,31 @@ def modal_honorarios(
         ):
             st.rerun()
 
-        if button_submit("Cargar Comprobante", key=f"{key_prefix}_btn_submit"):
+        etiqueta = "Guardar Cambios" if es_edicion else "Cargar Comprobante"
+        if button_submit(etiqueta, key=f"{key_prefix}_btn_submit"):
             errores: list[str] = []
             if not nro_valido:
-                errores.append("El Nro. de comprobante debe tener entre 1 y 5 dígitos.")
+                errores.append(
+                    "El Nro. de comprobante debe tener entre 1 y 5 dígitos."
+                )
             if not fecha:
                 errores.append("Debe indicar la Fecha.")
-            if not cta_cte.strip():
+            if not cta_limpia:
                 errores.append("Debe indicar la Cuenta Corriente.")
             if not tipo_limpio:
                 errores.append("Debe indicar el Tipo de comprobante.")
+
+            # Pre-check de duplicados. En edición excluimos el nro
+            # original para no bloquear un guardado sin cambios.
+            if (
+                nro_valido
+                and nro_comprobante in existentes
+                and nro_comprobante != nro_original
+            ):
+                errores.append(
+                    f"El comprobante `{nro_comprobante}` ya existe. Si "
+                    "necesita corregirlo, edítelo desde la grilla."
+                )
 
             if errores:
                 for err in errores:
@@ -544,6 +736,69 @@ def modal_honorarios(
 
             fecha_dt = datetime(fecha.year, fecha.month, fecha.day)
 
+            # ══════════ MODO EDICIÓN: UN SOLO PUT update_many ══════════
+            if es_edicion:
+                # Validación estricta contra HonorariosUpdate: si algo
+                # falla, NO se envía nada a la API.
+                try:
+                    payload: dict[str, Any] = (
+                        construir_payload_actualizacion_caratula(
+                            nro_comprobante=nro_comprobante,
+                            ejercicio=ejercicio,
+                            mes=mes,
+                            fecha=fecha_dt,
+                            tipo=tipo_limpio,
+                            cta_cte=cta_limpia,
+                        )
+                    )
+                except ValidationError as exc:
+                    st.error(f"⚠️ Los datos no cumplen HonorariosUpdate: {exc}")
+                    return
+
+                # La PATH lleva el nro ACTUAL (identifica el
+                # comprobante); el nro nuevo viaja en el payload.
+                endpoint_edicion: str = (
+                    f"{Endpoints.SLAVE_HONORARIOS.value}/update_many/"
+                    f"{quote(nro_original, safe='')}"
+                )
+
+                with st.spinner(
+                    f"Actualizando carátula de {len(df_docs)} línea(s)..."
+                ):
+                    try:
+                        # token explícito: el ContextVar no se propaga
+                        # en diálogos.
+                        res = put_request(
+                            endpoint=endpoint_edicion,
+                            json_body=payload,
+                            token=token,
+                        )
+                    except AppBaseException as exc:
+                        st.error(f"⚠️ {exc}")
+                        return
+
+                    if not res:
+                        st.error(
+                            "La API no confirmó la operación. "
+                            "Verifique e intente nuevamente."
+                        )
+                        return
+
+                    st.snow()
+                    st.toast(
+                        f"✅ Comprobante `{nro_comprobante}` actualizado: "
+                        f"carátula de {len(df_docs)} línea(s)",
+                        icon="📈",
+                    )
+                    # Invalida el caché de la grilla y de las referencias.
+                    st.session_state[session_state_update_key] = (
+                        int(st.session_state.get(session_state_update_key, 0)) + 1
+                    )
+                    time.sleep(2)
+                    st.rerun()
+                return
+
+            # ═══════════ MODO ALTA: POST add_many ═══════════
             # Validación estricta contra HonorarioReport: si algo
             # falla, NO se envía nada a la API.
             try:
@@ -553,12 +808,17 @@ def modal_honorarios(
                     mes=mes,
                     fecha=fecha_dt,
                     nro_comprobante=nro_comprobante,
-                    cta_cte=cta_cte.strip(),
+                    cta_cte=cta_limpia,
                     tipo=tipo_limpio,
                 )
             except ValidationError as exc:
                 st.error(f"⚠️ Los datos no cumplen el esquema HonorarioReport: {exc}")
                 return
+
+            endpoint: str = (
+                f"{Endpoints.SLAVE_HONORARIOS.value}/add_many/"
+                f"{quote(nro_comprobante, safe='')}"
+            )
 
             with st.spinner(f"Enviando {len(registros)} documentos..."):
                 try:

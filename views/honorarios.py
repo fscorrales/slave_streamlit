@@ -162,16 +162,22 @@ def dataframe_honorarios_comprobantes(
                     key_prefix=f"add_honorario_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
                 )
             if button_edit("Editar", key=f"btn_edit_{key}"):
-                pass
-                # if len(event.selection.rows) > 0:
-                #     selected_row_index = event.selection.rows[0]
-                #     datos_edicion = df_filtrado.iloc[selected_row_index].to_dict()
-                #     print(datos_edicion)
-                #     modal_honorarios(
-                #         key_prefix=f"edit_honorarios_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                #         datos_carga=datos_edicion,
-                #         es_edicion=True,
-                #     )
+                if len(event.selection.rows) > 0:
+                    selected_row_index = event.selection.rows[0]
+                    datos_edicion = df_filtrado.iloc[selected_row_index].to_dict()
+                    # Microsegundos: evita que dos aperturas en el mismo
+                    # segundo compartan el estado de los widgets (las keys
+                    # derivan del prefijo). Se pasa el df SIN agrupar para
+                    # que el modal resuelva los id de cada línea.
+                    modal_honorarios(
+                        key_prefix=(
+                            f"edit_honorario_"
+                            f"{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+                        ),
+                        datos_carga=datos_edicion,
+                        es_edicion=True,
+                        df_honorarios=df_comprobantes,
+                    )
             if button_delete("Borrar", key=f"btn_delete_{key}"):
                 if len(event.selection.rows) > 0:
                     selected_row_index = event.selection.rows[0]

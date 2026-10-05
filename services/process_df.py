@@ -10,6 +10,9 @@ __all__ = [
     "process_informe_por_destino",
     "merge_informe_con_precarizados",
     "construir_payload_honorarios",
+    "construir_payload_actualizacion_caratula",
+    "componer_nro_comprobante",
+    "separar_nro_comprobante",
 ]
 
 
@@ -20,7 +23,11 @@ from typing import Any
 
 import pandas as pd
 
-from models.schemas import HonorarioReport, InformePorDestino
+from models.schemas import (
+    HonorarioReport,
+    HonorariosUpdate,
+    InformePorDestino,
+)
 from utils.handling_files import read_csv_file
 from utils.transform_data import normalize_name_for_match
 
@@ -73,6 +80,34 @@ _TITULO_ESPERADO: str = "Resumen de Pagos por Destino"
 
 # Archivo por defecto cuando no se provee ningún argumento.
 _DEFAULT_CSV: Path = Path(__file__).resolve().parent / "informe_por_destino.csv"
+
+# --------------------------------------------------
+# Campos de la línea de un comprobante de honorarios.
+#
+# La **carátula** (compartida por todas las líneas de un comprobante)
+# es: ejercicio, mes, fecha, nro_comprobante, cta_cte, tipo.
+# Estos son los campos *por línea*, que se conservan sin cambios al
+# editar la carátula y se toman del CSV al dar de alta.
+# --------------------------------------------------
+_CAMPOS_TEXTO_LINEA: tuple[str, ...] = (
+    "cuit",
+    "nombre_completo",
+    "actividad",
+    "partida",
+)
+
+_CAMPOS_MONTO: tuple[str, ...] = (
+    "importe_bruto",
+    "iibb",
+    "lp",
+    "sellos",
+    "seguro",
+    "otras_retenciones",
+    "anticipo",
+    "descuento",
+    "mutual",
+    "embargo",
+)
 
 
 # --------------------------------------------------
@@ -129,6 +164,61 @@ def _texto_limpio(valor: object) -> str:
     if isinstance(valor, float) and valor.is_integer():
         return str(int(valor))
     return str(valor)
+
+
+# --------------------------------------------------
+def _montar_registro(
+    fila: dict[str, Any],
+    *,
+    ejercicio: int,
+    mes: str,
+    fecha: datetime,
+    nro_comprobante: str,
+    cta_cte: str,
+    tipo: str,
+) -> dict[str, Any]:
+    """
+    Arma un registro ``HonorarioReport`` a partir de una fila.
+
+    Combina la **carátula** (parámetros, aplicados a todas las líneas
+    del comprobante) con los **campos de línea** leídos de ``fila``
+    (que se conservan sin tocar al editar la carátula).
+
+    Es el helper que arma un registro completo ``HonorarioReport``
+    para el alta de comprobantes
+    (:func:`construir_payload_honorarios`).
+
+    Nota: la edición de carátula NO usa este helper porque sólo
+    envía los campos de carátula vía ``HonorariosUpdate``.
+
+    Args:
+        fila: Diccionario con los campos de la línea (p.ej. una fila
+            de ``DataFrame.to_dict(orient="records")``).
+        ejercicio: Ejercicio derivado del año de la fecha.
+        mes: Mes en formato ``"%m/%Y"``.
+        fecha: Fecha del comprobante (``datetime``).
+        nro_comprobante: Comprobante completo ``"00000/aa"``.
+        cta_cte: Cuenta corriente.
+        tipo: Tipo de comprobante.
+
+    Returns:
+        Dict compatible con ``HonorarioReport`` (sin ``id``).
+    """
+    registro: dict[str, Any] = {
+        "ejercicio": int(ejercicio),
+        "mes": str(mes),
+        "fecha": fecha,
+        "nro_comprobante": str(nro_comprobante),
+        "cta_cte": str(cta_cte),
+        "tipo": str(tipo),
+    }
+    for campo in _CAMPOS_TEXTO_LINEA:
+        registro[campo] = _texto_limpio(fila.get(campo))
+    for campo in _CAMPOS_MONTO:
+        valor = fila.get(campo, 0.0)
+        registro[campo] = float(valor) if pd.notna(valor) else 0.0
+    registro["updated_at"] = datetime.now()
+    return registro
 
 
 # --------------------------------------------------
@@ -381,40 +471,127 @@ def construir_payload_honorarios(
         pydantic.ValidationError: Si alguna fila no cumple el
             esquema. El llamador debe informarlo y NO enviar nada.
     """
-    campos_monto: tuple[str, ...] = (
-        "importe_bruto",
-        "iibb",
-        "lp",
-        "sellos",
-        "seguro",
-        "otras_retenciones",
-        "anticipo",
-        "descuento",
-        "mutual",
-        "embargo",
-    )
-
     registros: list[dict[str, Any]] = []
     for fila in df_merged.to_dict(orient="records"):
-        registro: dict[str, Any] = {
-            "ejercicio": int(ejercicio),
-            "mes": str(mes),
-            "fecha": fecha,
-            "nro_comprobante": str(nro_comprobante),
-            "cta_cte": str(cta_cte),
-            "tipo": str(tipo),
-            "cuit": _texto_limpio(fila.get("cuit")),
-            "nombre_completo": _texto_limpio(fila.get("nombre_completo")),
-            "actividad": _texto_limpio(fila.get("actividad")),
-            "partida": _texto_limpio(fila.get("partida")),
-        }
-        for campo in campos_monto:
-            valor = fila.get(campo, 0.0)
-            registro[campo] = float(valor) if pd.notna(valor) else 0.0
-        registro["updated_at"] = datetime.now()
-
+        registro = _montar_registro(
+            fila,
+            ejercicio=ejercicio,
+            mes=mes,
+            fecha=fecha,
+            nro_comprobante=nro_comprobante,
+            cta_cte=cta_cte,
+            tipo=tipo,
+        )
         # Validación estricta contra el esquema del modelo.
         HonorarioReport.model_validate(registro)
         registros.append(registro)
 
     return registros
+
+
+# --------------------------------------------------
+def componer_nro_comprobante(base: str, anio: int) -> str:
+    """
+    Compone el comprobante completo ``"00000/aa"``.
+
+    ``("123", 2026)`` -> ``"00123/26"``. La parte numérica se rellena
+    con ceros a la izquierda hasta 5 dígitos y el sufijo son los dos
+    últimos dígitos del año.
+
+    Args:
+        base: Parte numérica (puede traer ceros a la izquierda).
+        anio: Año del comprobante (de donde salen los dos últimos
+            dígitos).
+
+    Returns:
+        ``"00000/aa"`` o ``""`` si ``base`` no es numérica.
+    """
+    texto: str = (base or "").strip()
+    if not texto.isdigit():
+        return ""
+    return f"{texto.zfill(5)}/{str(int(anio))[-2:]}"
+
+
+# --------------------------------------------------
+def separar_nro_comprobante(nro: object) -> str:
+    """
+    Extrae la parte numérica de un comprobante ``"00000/aa"``.
+
+    ``"00123/26"`` -> ``"123"`` (sin ceros a la izquierda), para
+    pre-cargar el ``text_input`` del modal de edición.
+
+    Args:
+        nro: Comprobante crudo (puede ser ``None``/``NaN``).
+
+    Returns:
+        La parte numérica como ``str``, o ``""`` si el formato no es
+        reconocido (para que el usuario deba tipearlo).
+    """
+    if nro is None or (isinstance(nro, float) and pd.isna(nro)):
+        return ""
+    texto: str = str(nro).strip()
+    if not texto:
+        return ""
+    base: str = texto.split("/")[0].strip()
+    return str(int(base)) if base.isdigit() else ""
+
+
+# --------------------------------------------------
+def construir_payload_actualizacion_caratula(
+    *,
+    nro_comprobante: str,
+    ejercicio: int,
+    mes: str,
+    fecha: datetime,
+    tipo: str,
+    cta_cte: str,
+) -> dict[str, Any]:
+    """
+    Construye el payload único para ``PUT .../update_many/{nro_viejo}``.
+
+    Actualiza en bloque la **carátula** de todas las líneas de un
+    comprobante. Sólo se envían campos de carátula: los de línea
+    (``cuit``, ``nombre_completo``, ``actividad``, ``partida`` e
+    importes) **se conservan tal cual** porque el servidor no los toca.
+
+    Notas de diseño:
+
+    - **``nro_comprobante`` es el NUEVO número**: el comprobante se
+      identifica por el nro de la *path* (el número original) y éste
+      es el valor de reemplazo. Es ``None`` cuando no cambia, y el
+      servidor entonces conserva el actual.
+    - **No se envía ``partida``**: es un campo de **línea** y varía
+      entre líneas del mismo comprobante; enviarlo en bloque
+      sobrescribiría la partida de todas las líneas con un único
+      valor. Se omite para que el servidor lo deje intacto.
+    - **No se envía ``updated_at``**: lo asigna el servidor.
+
+    Args:
+        nro_comprobante: Nuevo número ``"00000/aa"`` (puede coincidir
+            con el actual si el usuario no lo cambió).
+        ejercicio: Ejercicio derivado del año de la fecha.
+        mes: Mes en formato ``"%m/%Y"``.
+        fecha: Fecha del comprobante.
+        tipo: Tipo de comprobante (obligatorio en ``HonorariosUpdate``).
+        cta_cte: Cuenta corriente.
+
+    Returns:
+        Dict listo para enviar como cuerpo del ``PUT``.
+
+    Raises:
+        pydantic.ValidationError: Si el payload no cumple
+            ``HonorariosUpdate`` (el llamador NO debe enviar nada).
+    """
+    payload: dict[str, Any] = {
+        "nro_comprobante": str(nro_comprobante),
+        "ejercicio": int(ejercicio),
+        "mes": str(mes),
+        "fecha": fecha,
+        "tipo": str(tipo),
+        "cta_cte": str(cta_cte),
+    }
+    # Validación estricta contra el esquema del Back antes de enviar.
+    HonorariosUpdate.model_validate(payload)
+    return payload
+
+

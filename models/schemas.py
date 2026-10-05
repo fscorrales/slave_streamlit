@@ -75,3 +75,24 @@ class InformePorDestino(BaseModel):
     descuento: float
     mutual: float
     embargo: float
+
+
+# -------------------------------------------------
+class HonorariosUpdate(BaseModel):
+    """Payload para actualizar en bloque todos los registros de un comprobante.
+
+    El comprobante a modificar se identifica por el ``nro_comprobante``
+    de la **path** de la ruta (el número actual). El
+    ``nro_comprobante`` de este schema es el **nuevo** número: si se
+    envía, el servidor renombra el comprobante; si es ``None``, lo
+    conserva. El ``updated_at`` lo asigna el servidor, por eso no
+    forma parte de este schema.
+    """
+
+    ejercicio: Optional[int] = None
+    mes: Optional[str] = None
+    fecha: Optional[datetime] = None
+    nro_comprobante: Optional[str] = None
+    tipo: str
+    cta_cte: Optional[str] = None
+    partida: Optional[str] = None
