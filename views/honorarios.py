@@ -50,7 +50,7 @@ def dataframe_honorarios_comprobantes(
         # 1. Creamos una fila de inputs usando columnas (podés elegir cuáles indexar)
         df_filtrado = (
             df_comprobantes.groupby(
-                ["ejercicio", "mes", "fecha", "nro_comprobante", "tipo"]
+                ["ejercicio", "mes", "fecha", "nro_comprobante", "tipo", "cta_cte"]
             )[["importe_bruto"]]
             .sum()
             .reset_index()
@@ -58,64 +58,42 @@ def dataframe_honorarios_comprobantes(
         df_filtrado = df_filtrado.sort_values(
             by=["fecha", "nro_comprobante"], ascending=False
         ).reset_index(drop=True)
-        # col1, col2, col3, col4, col5 = st.columns(5)
+        col1, col2, col3 = st.columns(3)
 
-        # with col1:
-        #     f_id_carga = st.text_input(
-        #         "Id Carga",
-        #         placeholder="Ej: 1175",
-        #         key=f"f_id_carga_{REPORTE}",
-        #     )
-        # with col2:
-        #     f_cuit = st.text_input(
-        #         "CUIT",
-        #         placeholder="Ej: 20632351514",
-        #         key=f"f_cuit_{REPORTE}",
-        #     )
-        # with col3:
-        #     f_desc_obra = st.text_input(
-        #         "Descripción Obra",
-        #         placeholder="Ej: Museo",
-        #         key=f"f_desc_obra_{REPORTE}",
-        #     )
-        # with col4:
-        #     f_actividad = st.text_input(
-        #         "Actividad",
-        #         placeholder="Ej: 11-00-02-79",
-        #         key=f"f_actividad_{REPORTE}",
-        #     )
-        # with col5:
-        #     f_importe_min = st.number_input(
-        #         "Importe Mínimo",
-        #         min_value=0.0,
-        #         value=0.0,
-        #         step=10000.0,
-        #         key=f"f_importe_min_{REPORTE}",
-        #     )
+        with col1:
+            f_mes = st.text_input(
+                "Mes/Año",
+                placeholder="Ej: 01/2026",
+                key=f"f_mes_{REPORTE}",
+            )
+        with col2:
+            f_nro_comprobante = st.text_input(
+                "Nro Comprobante",
+                placeholder="Ej: 1175",
+                key=f"f_nro_comprobante_{REPORTE}",
+            )
+        with col3:
+            f_tipo = st.text_input(
+                "Tipo",
+                placeholder="Ej: Honorario",
+                key=f"f_tipo_{REPORTE}",
+            )
 
-        # # 2. Aplicamos los filtros en cascada sobre el DataFrame (Frontend Puro)
-        # if f_id_carga:
-        #     df_filtrado = df_filtrado[
-        #         df_filtrado["id_carga"].astype(str).str.contains(f_id_carga, case=False)
-        #     ]
-        # if f_cuit:
-        #     df_filtrado = df_filtrado[
-        #         df_filtrado["cuit"].astype(str).str.contains(f_cuit, case=False)
-        #     ]
-        # if f_desc_obra:
-        #     df_filtrado = df_filtrado[
-        #         df_filtrado["desc_obra"]
-        #         .astype(str)
-        #         .str.contains(f_desc_obra, case=False)
-        #     ]
-        # if f_actividad:
-        #     df_filtrado = df_filtrado[
-        #         df_filtrado["actividad"]
-        #         .astype(str)
-        #         .str.contains(f_actividad, case=False)
-        #     ]
-        # if f_importe_min:
-        #     df_filtrado = df_filtrado[df_filtrado["importe"] >= f_importe_min]
+        # 2. Aplicamos los filtros en cascada sobre el DataFrame (Frontend Puro)
+        if f_mes:
+            df_filtrado = df_filtrado[
+                df_filtrado["mes"].astype(str).str.contains(f_mes, case=False)
+            ]
+        if f_nro_comprobante:
+            df_filtrado = df_filtrado[
+                df_filtrado["nro_comprobante"]
+                .astype(str)
+                .str.contains(f_nro_comprobante, case=False)
+            ]
+        if f_tipo:
+            df_filtrado = df_filtrado[
+                df_filtrado["tipo"].astype(str).str.contains(f_tipo, case=False)
+            ]
 
         event = dataframe(
             df_filtrado,
@@ -129,7 +107,7 @@ def dataframe_honorarios_comprobantes(
                 "fecha",
                 "nro_comprobante",
                 "tipo",
-                # "cta_cte",
+                "cta_cte",
                 "importe_bruto",
             ],
             column_config={
