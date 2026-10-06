@@ -294,64 +294,68 @@ def render() -> None:
             selected_id = df_filtrado.iloc[selected_row_index]["nro_comprobante"]
 
             with st.container(horizontal=True, border=False, width="stretch"):
-                df_imp = df_honorarios[df_honorarios["nro_comprobante"] == selected_id]
-                df_imp = (
-                    df_imp.groupby(["actividad", "partida"])[["importe_bruto"]]
-                    .sum()
-                    .reset_index()
-                )
-                df_imp["importe"] = df_imp["importe_bruto"].apply(formato_moneda_ar)
-                df_imp = df_imp.sort_values(
-                    by=["actividad", "partida"], ascending=True
-                ).reset_index(drop=True)
-                dataframe_with_buttons(
-                    df_imp,
-                    key=f"{REPORTE}_df_imp",
-                    column_order=[
-                        "actividad",
-                        "partida",
-                        "importe",
-                    ],
-                    show_buttons=False,
-                )
-
-                df_suma = (
-                    df_honorarios[df_honorarios["nro_comprobante"] == selected_id][
-                        [
-                            "iibb",
-                            "lp",
-                            "sellos",
-                            "seguro",
-                            "otras_retenciones",
-                            "anticipo",
-                            "descuento",
-                            "mutual",
-                            "embargo",
-                            "importe_bruto",
-                        ]
+                with st.container(horizontal=False, border=True, width="stretch"):
+                    df_imp = df_honorarios[
+                        df_honorarios["nro_comprobante"] == selected_id
                     ]
-                    .sum()
-                    .to_dict()
-                )
-                payload_retenciones = build_retenciones_payload(df_suma)
-                lista_ret = payload_retenciones.get("retenciones", [])
-                # Ordenamos la lista de retenciones por el código (convertido a entero)
-                lista_ordenada = sorted(lista_ret, key=lambda x: int(x["codigo"]))
-                df_ret = pd.DataFrame(lista_ordenada)
-                # build_retenciones_payload omite importes en 0: sin
-                # retenciones, df_ret queda sin columnas y no hay grilla
-                # que mostrar (evita el KeyError en 'importe').
-                if not df_ret.empty:
-                    df_ret["importe"] = df_ret["importe"].apply(formato_moneda_ar)
+                    df_imp = (
+                        df_imp.groupby(["actividad", "partida"])[["importe_bruto"]]
+                        .sum()
+                        .reset_index()
+                    )
+                    df_imp["importe"] = df_imp["importe_bruto"].apply(formato_moneda_ar)
+                    df_imp = df_imp.sort_values(
+                        by=["actividad", "partida"], ascending=True
+                    ).reset_index(drop=True)
                     dataframe_with_buttons(
-                        df_ret,
-                        key=f"{REPORTE}_df_ret",
+                        df_imp,
+                        key=f"{REPORTE}_df_imp",
                         column_order=[
-                            "codigo",
+                            "actividad",
+                            "partida",
                             "importe",
                         ],
                         show_buttons=False,
                     )
+
+                with st.container(horizontal=False, border=True, width="stretch"):
+                    df_suma = (
+                        df_honorarios[df_honorarios["nro_comprobante"] == selected_id][
+                            [
+                                "iibb",
+                                "lp",
+                                "sellos",
+                                "seguro",
+                                "otras_retenciones",
+                                "anticipo",
+                                "descuento",
+                                "mutual",
+                                "embargo",
+                                "importe_bruto",
+                            ]
+                        ]
+                        .sum()
+                        .to_dict()
+                    )
+                    payload_retenciones = build_retenciones_payload(df_suma)
+                    lista_ret = payload_retenciones.get("retenciones", [])
+                    # Ordenamos la lista de retenciones por el código (convertido a entero)
+                    lista_ordenada = sorted(lista_ret, key=lambda x: int(x["codigo"]))
+                    df_ret = pd.DataFrame(lista_ordenada)
+                    # build_retenciones_payload omite importes en 0: sin
+                    # retenciones, df_ret queda sin columnas y no hay grilla
+                    # que mostrar (evita el KeyError en 'importe').
+                    if not df_ret.empty:
+                        df_ret["importe"] = df_ret["importe"].apply(formato_moneda_ar)
+                        dataframe_with_buttons(
+                            df_ret,
+                            key=f"{REPORTE}_df_ret",
+                            column_order=[
+                                "codigo",
+                                "importe",
+                            ],
+                            show_buttons=False,
+                        )
 
 
 if __name__ == "__main__":

@@ -10,7 +10,9 @@ import pandas as pd
 import streamlit as st
 
 import utils.exceptions as ex
+from components import text_filters_bar
 from services.data_fetcher import get_precarizados
+from services.process_df import apply_text_filters
 from utils.endpoints import Endpoints
 from views import (
     ReportState,
@@ -22,6 +24,18 @@ from views import (
 )
 
 REPORTE = "precarizados"
+# Filtros particulares de la grilla (frontend puro): se renderizan con
+# text_filters_bar() y se aplican en cascada con apply_text_filters()
+# sobre el DataFrame ya obtenido de la API, sin volver a tocar la API.
+FILTROS_TABLA: list[dict[str, str]] = [
+    {"label": "Nombre", "column": "nombre_completo", "placeholder": "Ej: Juan Pérez"},
+    {
+        "label": "Actividad",
+        "column": "actividad",
+        "placeholder": "Ej: 01-00-00-03",
+    },
+    {"label": "Partida", "column": "partida", "placeholder": "Ej: 344"},
+]
 
 
 # --------------------------------------------------
@@ -83,16 +97,22 @@ def render() -> None:
 
     # Mostrar resultados (usando session_state para que no desaparezcan)
     if not df_precarizados.empty:
-        dataframe_with_buttons(
-            df_precarizados,
-            key=f"{REPORTE}_df_precarizados",
-            height=300,
-            column_order=["cuit", "nombre_completo", "actividad", "partida"],
-            selection_mode="single-row",
-            add_func=add_precarizado,
-            edit_func=edit_precarizado,
-            delete_func=delete_precarizado,
-        )
+        # Filtros particulares de la grilla (frontend puro, sin llamadas
+        # a la API): declarativos en FILTROS_TABLA y aplicados en cascada.
+        with st.container(horizontal=False, border=True, width="stretch"):
+            valores_filtro = text_filters_bar(FILTROS_TABLA, key_prefix=REPORTE)
+            df_vista = apply_text_filters(df_precarizados, valores_filtro)
+
+            dataframe_with_buttons(
+                df_vista,
+                key=f"{REPORTE}_df_precarizados",
+                height=300,
+                column_order=["cuit", "nombre_completo", "actividad", "partida"],
+                selection_mode="single-row",
+                add_func=add_precarizado,
+                edit_func=edit_precarizado,
+                delete_func=delete_precarizado,
+            )
 
 
 if __name__ == "__main__":

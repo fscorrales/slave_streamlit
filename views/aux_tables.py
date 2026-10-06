@@ -406,42 +406,41 @@ def dataframe_with_buttons(
     **kwargs,
 ):
 
-    with st.container(horizontal=False, border=True, width="stretch"):
-        event = dataframe(
-            df,
-            key=f"{key}",
-            height=height,
-            column_order=column_order,
-            on_select="rerun" if selection_mode else "ignore",
-            selection_mode=selection_mode or "multi-row",
-        )
-        if show_buttons:
-            with st.container(
-                horizontal=True,
-                border=False,
-                width="stretch",
-                horizontal_alignment="center",
-                gap="medium",
+    event = dataframe(
+        df,
+        key=f"{key}",
+        height=height,
+        column_order=column_order,
+        on_select="rerun" if selection_mode else "ignore",
+        selection_mode=selection_mode or "multi-row",
+    )
+    if show_buttons:
+        with st.container(
+            horizontal=True,
+            border=False,
+            width="stretch",
+            horizontal_alignment="center",
+            gap="medium",
+        ):
+            if button_add(
+                "Agregar",
+                key=f"btn_add_{key}",
+                type="primary",
+                disabled=not add_func,
             ):
-                if button_add(
-                    "Agregar",
-                    key=f"btn_add_{key}",
-                    type="primary",
-                    disabled=not add_func,
-                ):
-                    if add_func:
-                        add_func()
-                if button_edit("Editar", key=f"btn_edit_{key}", disabled=not edit_func):
-                    if edit_func:
-                        if len(event.selection.rows) > 0:
-                            selected_row_index = event.selection.rows[0]
-                            datos_edicion = df.iloc[selected_row_index].to_dict()
-                            edit_func(datos_edicion)
-                if button_delete(
-                    "Borrar", key=f"btn_delete_{key}", disabled=not delete_func
-                ):
-                    if delete_func:
-                        if len(event.selection.rows) > 0:
-                            selected_row_index = event.selection.rows[0]
-                            datos_eliminar = df.iloc[selected_row_index].to_dict()
-                            delete_func(datos_eliminar)
+                if add_func:
+                    add_func()
+            if button_edit("Editar", key=f"btn_edit_{key}", disabled=not edit_func):
+                if edit_func:
+                    if len(event.selection.rows) > 0:
+                        selected_row_index = event.selection.rows[0]
+                        datos_edicion = df.iloc[selected_row_index].to_dict()
+                        edit_func(datos_edicion)
+            if button_delete(
+                "Borrar", key=f"btn_delete_{key}", disabled=not delete_func
+            ):
+                if delete_func:
+                    if len(event.selection.rows) > 0:
+                        selected_row_index = event.selection.rows[0]
+                        datos_eliminar = df.iloc[selected_row_index].to_dict()
+                        delete_func(datos_eliminar)
