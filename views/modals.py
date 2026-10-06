@@ -22,6 +22,7 @@ from services.process_df import (
     componer_nro_comprobante,
     construir_payload_actualizacion_caratula,
     construir_payload_honorarios,
+    construir_payload_reescritura,
     merge_informe_con_precarizados,
     process_informe_por_destino,
     separar_nro_comprobante,
@@ -30,6 +31,11 @@ from utils.context import sync_session_token
 from utils.endpoints import Endpoints
 from utils.exceptions import AppBaseException
 from views.aux_tables import report_data_version_key
+
+# Tipo de comprobante que exige la partida real del padrón de
+# Precarizados. El Back fuerza la partida "399" a todo tipo distinto
+# de este al agregar o editar (ver modal_honorarios).
+TIPO_HONORARIOS: str = "Honorarios"
 
 
 # --- MODAL: ELIMINAR COMPROBANTE GENERICO ---
@@ -404,6 +410,15 @@ def modal_honorarios(
       CUIT, actividad, partida) **se conservan sin cambios**: para
       reemplazarlos hay que eliminar el comprobante y volver a
       cargarlo.
+      **Excepción — paso a tipo Honorarios:** si el comprobante era
+      de un tipo distinto y el nuevo tipo es ``"Honorarios"``, el
+      Back mantendría las partidas ``"399"`` forzadas. En ese caso
+      el modal **reescribe** las líneas con
+      ``DELETE .../delete_many`` + ``POST .../add_many`` y resuelve
+      cada ``partida`` contra el padrón de Precarizados (merge por
+      nombre normalizado). Si algún agente no matchea se aborta
+      **antes** de tocar la API; si el POST falla tras el DELETE se
+      intenta restaurar el comprobante original.
 
     Flujo de **alta**, secuencial y **sin tabs** (las pestañas no se
     pueden bloquear y el usuario podría saltarse el gate):
@@ -482,6 +497,7 @@ def modal_honorarios(
 
     # ── MODO EDICIÓN: resolver las líneas del comprobante ──
     nro_original: str = ""
+    tipo_original: str = ""
     df_docs = pd.DataFrame()
     if es_edicion:
         if df_honorarios is None or df_honorarios.empty:
@@ -497,6 +513,11 @@ def modal_honorarios(
             st.error(f"No se encontraron las líneas del comprobante `{nro_original}`.")
             _barra_cancelar()
             return
+        # Tipo previo del comprobante: define si al guardar hay que
+        # reescribir las líneas (paso a Honorarios con partidas "399").
+        tipo_original = _a_texto((datos_carga or {}).get("tipo")).strip()
+        if not tipo_original and "tipo" in df_docs.columns:
+            tipo_original = _a_texto(df_docs["tipo"].iloc[0]).strip()
 
     # ═══════════ BLOQUE SUPERIOR (según modo) ═══════════
     df_merged = pd.DataFrame()
@@ -508,6 +529,10 @@ def modal_honorarios(
             "operación. Puede cambiar fecha, nro de comprobante, "
             "cta_cte y tipo; los importes, CUIT, actividad y partida "
             "se conservan sin cambios.\n\n"
+            "⚠️ Si cambia el tipo a **Honorarios** viniendo de otro "
+            "tipo, el comprobante se **reescribirá** (DELETE + ADD) y "
+            "las partidas se resolverán contra el padrón de "
+            "Precarizados.\n\n"
             "ℹ️ Para **reemplazar las líneas** del comprobante, "
             "elimínelo con *Borrar* y vuélvalo a cargar."
         )
@@ -603,7 +628,7 @@ def modal_honorarios(
         cta_inicial = ""
         if not df_docs.empty and "cta_cte" in df_docs.columns:
             cta_inicial = _a_texto(df_docs["cta_cte"].iloc[0])
-        tipo_inicial = _a_texto((datos_carga or {}).get("tipo")) or None
+        tipo_inicial = tipo_original or None
         # El valor previo debe estar siempre entre las opciones.
         if cta_inicial and cta_inicial not in ctas_ctes:
             ctas_ctes = [cta_inicial, *ctas_ctes]
@@ -665,6 +690,15 @@ def modal_honorarios(
     tipo_limpio: str = "" if tipo is None else str(tipo).strip()
     cta_limpia: str = "" if cta_cte is None else str(cta_cte).strip()
 
+    # ¿La edición pasa un comprobante NO-Honorarios a Honorarios? En
+    # ese caso el Back mantendría las partidas "399" forzadas y hay
+    # que reescribir las líneas con las partidas reales del padrón.
+    cambio_a_honorarios: bool = (
+        es_edicion
+        and tipo_limpio == TIPO_HONORARIOS
+        and tipo_original != TIPO_HONORARIOS
+    )
+
     st.caption(
         f"**Ejercicio:** `{ejercicio}` · **Mes:** `{mes}` · "
         f"**Nro. comprobante:** `{nro_comprobante or '—'}`"
@@ -678,20 +712,29 @@ def modal_honorarios(
     # ═══════════ CONFIRMACIÓN ═══════════
     st.markdown("#### Confirmación")
     if es_edicion:
-        endpoint_desc: str = (
-            f"`{Endpoints.SLAVE_HONORARIOS.value}/update_many/"
-            f"{quote(nro_original, safe='')}`"
-        )
         nuevo_txt: str = (
             f" y **renumerará** a `{nro_comprobante}`"
             if nro_comprobante != nro_original
             else ""
         )
-        st.caption(
-            f"Se actualizará la carátula de **{len(df_docs)}** línea(s) "
-            f"del comprobante `{nro_original}` con **un solo `PUT`** a "
-            f"{endpoint_desc}{nuevo_txt}."
-        )
+        if cambio_a_honorarios:
+            st.caption(
+                f"Al pasar a tipo **Honorarios**, se **reescribirán** "
+                f"las **{len(df_docs)}** línea(s) del comprobante "
+                f"`{nro_original}` con `DELETE .../delete_many` + "
+                f"`POST .../add_many`: cada partida se resolverá "
+                f"contra el padrón de Precarizados{nuevo_txt}."
+            )
+        else:
+            endpoint_desc: str = (
+                f"`{Endpoints.SLAVE_HONORARIOS.value}/update_many/"
+                f"{quote(nro_original, safe='')}`"
+            )
+            st.caption(
+                f"Se actualizará la carátula de **{len(df_docs)}** línea(s) "
+                f"del comprobante `{nro_original}` con **un solo `PUT`** a "
+                f"{endpoint_desc}{nuevo_txt}."
+            )
     else:
         endpoint_desc = (
             f"`{Endpoints.SLAVE_HONORARIOS.value}/add_many/"
@@ -739,8 +782,208 @@ def modal_honorarios(
 
             fecha_dt = datetime(fecha.year, fecha.month, fecha.day)
 
-            # ══════════ MODO EDICIÓN: UN SOLO PUT update_many ══════════
+            # ══════════ MODO EDICIÓN ══════════
             if es_edicion:
+                # ── Caso especial: no-Honorarios → Honorarios ──
+                # El Back fuerza la partida "399" a todo tipo distinto
+                # de Honorarios y, al volver a Honorarios, no sabe qué
+                # partida corresponde a cada agente: hay que reescribir
+                # las líneas con las partidas del padrón.
+                if cambio_a_honorarios:
+                    try:
+                        df_precarizados = get_precarizados(
+                            update_trigger=update_trigger
+                        )
+                    except AppBaseException as exc:
+                        st.error(
+                            f"⚠️ No se pudo obtener el padrón de Precarizados: {exc}"
+                        )
+                        return
+
+                    try:
+                        registros_reescritura: list[dict[str, Any]]
+                        sin_partida: list[str]
+                        registros_reescritura, sin_partida = (
+                            construir_payload_reescritura(
+                                df_docs,
+                                df_precarizados,
+                                ejercicio=ejercicio,
+                                mes=mes,
+                                fecha=fecha_dt,
+                                nro_comprobante=nro_comprobante,
+                                cta_cte=cta_limpia,
+                                tipo=tipo_limpio,
+                            )
+                        )
+                    except ValidationError as exc:
+                        st.error(
+                            f"⚠️ Los datos no cumplen el esquema HonorarioReport: {exc}"
+                        )
+                        return
+
+                    # GATE: si alguna partida no se resuelve, NO se
+                    # toca la API (mismo criterio que el Paso 1 del
+                    # modo alta).
+                    if sin_partida:
+                        st.error(
+                            "🚫 **No se pudieron resolver las partidas "
+                            "correctas** para el tipo *Honorarios*. Estos "
+                            "agentes no figuran en el padrón de "
+                            "Precarizados (o figuran sin partida):"
+                        )
+                        for nombre_agente in sin_partida:
+                            st.markdown(f"- `{nombre_agente}`")
+                        st.warning(
+                            "**El proceso se detiene aquí sin realizar "
+                            "cambios.** Complete el padrón desde la "
+                            "vista *Precarizados* y vuelva a intentarlo."
+                        )
+                        return
+
+                    # Payload de rollback: líneas originales con la
+                    # carátula previa, por si el POST falla después
+                    # del DELETE (las partidas "399" ya vienen en
+                    # df_docs y el Back las re-aplica al no ser
+                    # Honorarios).
+                    fila_inicial: pd.Series = df_docs.iloc[0]
+                    ejercicio_original: int = ejercicio
+                    if "ejercicio" in df_docs.columns and pd.notna(
+                        fila_inicial.get("ejercicio")
+                    ):
+                        ejercicio_original = int(fila_inicial["ejercicio"])
+                    mes_original: str = _a_texto(fila_inicial.get("mes")) or mes
+                    cta_original: str = (
+                        _a_texto(fila_inicial.get("cta_cte")) or cta_limpia
+                    )
+                    fecha_original: date | None = _a_fecha(fila_inicial.get("fecha"))
+                    try:
+                        registros_originales: list[dict[str, Any]] = (
+                            construir_payload_honorarios(
+                                df_docs,
+                                ejercicio=ejercicio_original,
+                                mes=mes_original,
+                                fecha=(
+                                    datetime.combine(
+                                        fecha_original, datetime.min.time()
+                                    )
+                                    if fecha_original
+                                    else fecha_dt
+                                ),
+                                nro_comprobante=nro_original,
+                                cta_cte=cta_original,
+                                tipo=tipo_original,
+                            )
+                        )
+                    except ValidationError as exc:
+                        st.error(
+                            f"⚠️ Las líneas originales no cumplen el "
+                            f"esquema HonorarioReport: {exc}"
+                        )
+                        return
+
+                    def _restaurar_originales(motivo: str) -> None:
+                        """Reintenta cargar las líneas originales del
+                        comprobante tras un fallo del POST de
+                        reescritura y notifica el resultado."""
+                        motivo_restaurado: str = ""
+                        try:
+                            restaurado = post_request(
+                                f"{Endpoints.SLAVE_HONORARIOS.value}"
+                                f"/add_many/{quote(nro_original, safe='')}",
+                                json_body=registros_originales,
+                                token=token,
+                            )
+                        except AppBaseException as exc:
+                            restaurado = None
+                            motivo_restaurado = str(exc)
+
+                        if restaurado:
+                            st.warning(
+                                f"⚠️ La reescritura falló ({motivo}). Se "
+                                f"**restauró** el comprobante "
+                                f"`{nro_original}` tal como estaba; no se "
+                                "realizaron cambios."
+                            )
+                        else:
+                            st.error(
+                                f"❌ La reescritura falló ({motivo}) y el "
+                                f"restaurado también "
+                                f"({motivo_restaurado or 'sin detalle'}). "
+                                f"El comprobante `{nro_original}` quedó "
+                                "**sin líneas**: vuelva a cargarlo desde "
+                                "el CSV."
+                            )
+                        # Invalida el caché de la grilla para que el
+                        # próximo render refleje el estado real.
+                        st.session_state[session_state_update_key] = (
+                            int(st.session_state.get(session_state_update_key, 0)) + 1
+                        )
+
+                    endpoint_borrado: str = (
+                        f"{Endpoints.SLAVE_HONORARIOS.value}"
+                        f"/delete_many/{quote(nro_original, safe='')}"
+                    )
+                    endpoint_reescritura: str = (
+                        f"{Endpoints.SLAVE_HONORARIOS.value}"
+                        f"/add_many/{quote(nro_comprobante, safe='')}"
+                    )
+
+                    with st.spinner(
+                        f"Reescribiendo {len(registros_reescritura)} "
+                        "línea(s) con las partidas del padrón..."
+                    ):
+                        # 1) Borrar las líneas actuales (partidas
+                        #    "399" forzadas por el Back).
+                        try:
+                            borrado = delete_request(endpoint_borrado, token=token)
+                        except AppBaseException as exc:
+                            st.error(
+                                f"⚠️ No se pudo eliminar el comprobante original: {exc}"
+                            )
+                            return
+
+                        if not borrado:
+                            st.error(
+                                "La API no confirmó el borrado. "
+                                "No se realizó ningún cambio."
+                            )
+                            return
+
+                        # 2) Crear las líneas con las partidas
+                        #    resueltas contra el padrón.
+                        motivo_fallo: str = ""
+                        try:
+                            res = post_request(
+                                endpoint_reescritura,
+                                json_body=registros_reescritura,
+                                token=token,
+                            )
+                        except AppBaseException as exc:
+                            res = None
+                            motivo_fallo = str(exc)
+
+                        if not res:
+                            _restaurar_originales(
+                                motivo_fallo or "la API no confirmó la operación"
+                            )
+                            return
+
+                        st.snow()
+                        st.toast(
+                            f"✅ Comprobante `{nro_comprobante}` reescrito: "
+                            f"{len(registros_reescritura)} línea(s) con "
+                            "partidas corregidas",
+                            icon="📈",
+                        )
+                        # Invalida el caché de la grilla y referencias.
+                        st.session_state[session_state_update_key] = (
+                            int(st.session_state.get(session_state_update_key, 0)) + 1
+                        )
+                        time.sleep(2)
+                        st.rerun()
+                    return
+
+                # ── Resto de los casos: UN SOLO PUT update_many ──
                 # Validación estricta contra HonorariosUpdate: si algo
                 # falla, NO se envía nada a la API.
                 try:

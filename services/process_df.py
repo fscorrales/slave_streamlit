@@ -228,8 +228,11 @@ def _montar_registro(
     para el alta de comprobantes
     (:func:`construir_payload_honorarios`).
 
-    Nota: la edición de carátula NO usa este helper porque sólo
-    envía los campos de carátula vía ``HonorariosUpdate``.
+    Nota: la edición simple de carátula NO usa este helper porque
+    sólo envía los campos de carátula vía ``HonorariosUpdate``; sí
+    lo usan el alta (:func:`construir_payload_honorarios`) y la
+    reescritura por cambio a tipo Honorarios
+    (:func:`construir_payload_reescritura`).
 
     Args:
         fila: Diccionario con los campos de la línea (p.ej. una fila
@@ -633,5 +636,111 @@ def construir_payload_actualizacion_caratula(
     # Validación estricta contra el esquema del Back antes de enviar.
     HonorariosUpdate.model_validate(payload)
     return payload
+
+
+# --------------------------------------------------
+def construir_payload_reescritura(
+    df_lineas: pd.DataFrame,
+    df_precarizados: pd.DataFrame,
+    *,
+    ejercicio: int,
+    mes: str,
+    fecha: datetime,
+    nro_comprobante: str,
+    cta_cte: str,
+    tipo: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """
+    Reconstruye las líneas de un comprobante para reescribirlo vía
+    ``DELETE .../delete_many`` + ``POST .../add_many``.
+
+    Se usa al editar un comprobante pasándolo de un tipo distinto de
+    ``"Honorarios"`` a ``"Honorarios"``: el Back fuerza la partida
+    ``"399"`` a todo tipo no-Honorarios y, al volver a Honorarios, no
+    puede saber qué partida corresponde a cada agente. Aquí la
+    ``partida`` de cada línea se resuelve contra el padrón de
+    Precarizados (``slave_precarizados``) cruzando ``nombre_completo``
+    con :func:`utils.transform_data.normalize_name_for_match`, el
+    mismo criterio que :func:`merge_informe_con_precarizados`.
+
+    Args:
+        df_lineas: Líneas actuales del comprobante (``df_docs``), con
+            los campos de línea (``cuit``, ``nombre_completo``,
+            ``actividad``, ``partida`` e importes).
+        df_precarizados: Padrón de la colección ``factureros``.
+        ejercicio: Ejercicio de la carátula (puede ser el nuevo).
+        mes: Mes en formato ``"%m/%Y"``.
+        fecha: Fecha de la carátula.
+        nro_comprobante: Comprobante completo ``"00000/aa"`` (el
+            nuevo, si se renumera).
+        cta_cte: Cuenta corriente.
+        tipo: Tipo de comprobante (``"Honorarios"``).
+
+    Returns:
+        Tupla ``(registros, sin_partida)``:
+
+        - ``registros``: lista de dicts compatibles con
+          ``HonorarioReport`` con la ``partida`` corregida, **sólo**
+          si TODAS las líneas resolvieron partida; vacía en caso
+          contrario.
+        - ``sin_partida``: agentes (nombre) cuya partida no pudo
+          resolverse porque no figuran en el padrón o figuran sin
+          partida. Vacía si todo matcheó.
+
+        Si ``sin_partida`` no está vacía, el llamador **NO** debe
+        tocar la API.
+
+    Raises:
+        pydantic.ValidationError: Si alguna fila no cumple el esquema
+            ``HonorarioReport``. El llamador debe informarlo y NO
+            enviar nada.
+    """
+    registros: list[dict[str, Any]] = []
+    if df_lineas.empty:
+        return registros, []
+
+    # Lookup ``_match_key -> partida`` del padrón (primer valor no
+    # vacío por clave, igual que merge_informe_con_precarizados).
+    lookup: dict[str, str] = {}
+    if not df_precarizados.empty and "nombre_completo" in df_precarizados.columns:
+        df_pad: pd.DataFrame = df_precarizados.copy()
+        if "partida" not in df_pad.columns:
+            df_pad["partida"] = pd.NA
+        df_pad = df_pad[["nombre_completo", "partida"]].copy()
+        df_pad["_match_key"] = df_pad["nombre_completo"].apply(
+            normalize_name_for_match
+        )
+        for clave, partida in zip(df_pad["_match_key"], df_pad["partida"]):
+            partida_limpia: str = _texto_limpio(partida)
+            if clave and partida_limpia and clave not in lookup:
+                lookup[clave] = partida_limpia
+
+    sin_partida: set[str] = set()
+    for fila in df_lineas.to_dict(orient="records"):
+        nombre_agente: str = _texto_limpio(fila.get("nombre_completo"))
+        partida_correcta: str = lookup.get(
+            normalize_name_for_match(nombre_agente), ""
+        )
+        if not partida_correcta:
+            sin_partida.add(nombre_agente or "(sin nombre)")
+            continue
+        fila_corregida: dict[str, Any] = {**fila, "partida": partida_correcta}
+        registro = _montar_registro(
+            fila_corregida,
+            ejercicio=ejercicio,
+            mes=mes,
+            fecha=fecha,
+            nro_comprobante=nro_comprobante,
+            cta_cte=cta_cte,
+            tipo=tipo,
+        )
+        # Validación estricta contra el esquema del modelo.
+        HonorarioReport.model_validate(registro)
+        registros.append(registro)
+
+    if sin_partida:
+        # Algún agente sin partida: no hay payload utilizable.
+        return [], sorted(sin_partida)
+    return registros, []
 
 
