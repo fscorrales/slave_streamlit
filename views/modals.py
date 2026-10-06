@@ -29,6 +29,7 @@ from services.process_df import (
 from utils.context import sync_session_token
 from utils.endpoints import Endpoints
 from utils.exceptions import AppBaseException
+from views.aux_tables import report_data_version_key
 
 
 # --- MODAL: ELIMINAR COMPROBANTE GENERICO ---
@@ -158,7 +159,7 @@ def modal_precarizado(
     datos_carga: dict[str, Any] | None = None,
     es_edicion: bool = False,
     es_autocarga: bool = False,
-    session_state_update_key: str = "precarizados_uploader_iteration",
+    session_state_update_key: str = report_data_version_key("precarizados"),
 ) -> None:
     """
     Modal para dar de alta o editar un agente de la colección

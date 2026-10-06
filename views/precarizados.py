@@ -16,6 +16,7 @@ from views import (
     dataframe_with_buttons,
     modal_delete_registro_gral,
     modal_precarizado,
+    report_data_version_key,
     report_template,
 )
 
@@ -45,14 +46,16 @@ def delete_precarizado(datos_eliminar: dict[str, Any]) -> None:
     modal_delete_registro_gral(
         endpoint=f"{Endpoints.SLAVE_FACTUREROS.value}/delete_one/{datos_eliminar['id']}",
         desc_registro=datos_eliminar["nombre_completo"],
-        session_state_update_key="precarizados_uploader_iteration",
+        session_state_update_key=report_data_version_key(REPORTE),
         key_prefix=f"delete_precarizados_{datetime.now().strftime('%Y%m%d%H%M%S')}",
     )
 
 
 # --------------------------------------------------
 def render() -> None:
-    report_template(
+    # La cabecera (título, filtro, export) es un @st.fragment que retorna
+    # el filtro vigente: no hace falta leerlo de session_state.
+    filtro_actual: str = report_template(
         key=REPORTE,
         title=REPORTE.capitalize(),
         description="",
@@ -60,9 +63,10 @@ def render() -> None:
         has_export=True,
     )
 
-    # Capturamos el filtro del session_state (que el fragmento actualizó)
-    filtro_actual: str = st.session_state.get(f"{REPORTE}_advanced_filter", "")
-    trigger: int = st.session_state.get("precarizados_uploader_iteration", 0)
+    # Versión de datos: se incrementa al crear/editar/borrar registros y
+    # sirve de update_trigger del @st.cache_data de get_precarizados
+    # (services/data_fetcher.py, autorizado por AGENTS.md §1).
+    trigger: int = st.session_state.get(report_data_version_key(REPORTE), 0)
 
     # Ejecutamos la lógica con el servicio cacheado (@st.cache_data vive
     # en services/data_fetcher.py desde que AGENTS.md §1 lo autorizó)

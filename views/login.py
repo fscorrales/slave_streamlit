@@ -6,6 +6,7 @@ import utils.exceptions as ex
 from services.auth_service import get_current_user, login, register
 from services.data_fetcher import get_precarizados
 from utils.context import set_token
+from views.aux_tables import report_data_version_key
 
 
 # --------------------------------------------------
@@ -63,13 +64,13 @@ def render_login() -> None:
                                 "Preparando ICARO...", expanded=True
                             ) as status:
                                 st.write("Sincronizando Precarizados...")
-                                if (
-                                    "precarizados_uploader_iteration"
-                                    not in st.session_state
-                                ):
-                                    st.session_state.precarizados_uploader_iteration = 0
+                                data_version_key = report_data_version_key(
+                                    "precarizados"
+                                )
+                                if data_version_key not in st.session_state:
+                                    st.session_state[data_version_key] = 0
                                 get_precarizados(
-                                    update_trigger=st.session_state.precarizados_uploader_iteration
+                                    update_trigger=st.session_state[data_version_key]
                                 )
                                 status.update(
                                     label="Sincronización Completa",

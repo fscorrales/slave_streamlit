@@ -1,4 +1,6 @@
 __all__ = [
+    "report_filter_key",
+    "report_data_version_key",
     "report_template",
     "dataframe_with_buttons",
 ]
@@ -49,6 +51,40 @@ def params_preparation(
     return params_peticion
 
 
+# --------------------------------------------------
+def report_filter_key(report_key: str) -> str:
+    """
+    Clave de ``st.session_state`` donde ``report_template()`` sincroniza
+    el filtro avanzado del reporte.
+
+    Args:
+        report_key: Identificador único del reporte (ej. ``precarizados``).
+
+    Returns:
+        Clave con formato ``{report_key}_advanced_filter``.
+    """
+    return f"{report_key}_advanced_filter"
+
+
+# --------------------------------------------------
+def report_data_version_key(report_key: str) -> str:
+    """
+    Clave de ``st.session_state`` con la versión de datos del reporte.
+
+    Es el contador que ``report_template()`` incrementa tras cada carga
+    de CSV y que los CRUD (modales, borrado) incrementan tras cada
+    escritura, para invalidar el ``@st.cache_data`` de los servicios
+    (ej. ``get_precarizados(update_trigger=...)``).
+
+    Args:
+        report_key: Identificador único del reporte (ej. ``precarizados``).
+
+    Returns:
+        Clave con formato ``{report_key}_data_version``.
+    """
+    return f"{report_key}_data_version"
+
+
 @st.fragment  # Permite que los filtros internos no recarguen TODA la página
 # --------------------------------------------------
 def report_template(
@@ -60,16 +96,48 @@ def report_template(
     has_upload: bool = False,
     uploader_func=None,
     uploader_help=None,
-):
+) -> str:
     """
-    Vista reutilizable.
-    filters_config: Lista de dicts con ['label', 'options', 'key', 'default']
+    Cabecera reutilizable de un reporte: título, descripción, filtro
+    avanzado, exportación a Excel y (opcional) carga de CSV.
+
+    Es un ``@st.fragment``: las interacciones con el uploader y el botón
+    de exportación se resuelven sin re-ejecutar la página completa.
+
+    Args:
+        key: Identificador único del reporte. Prefijo de todas las keys
+            de ``session_state`` que genera (ver Returns / Side Effects).
+        title: Título renderizado como encabezado principal.
+        endpoint: Endpoint base para la exportación
+            (``{endpoint}/export``) y para el ``POST`` de carga.
+        description: Párrafo informativo bajo el título.
+        has_export: Habilita el botón de exportación a Excel.
+        has_upload: Habilita el uploader CSV y su POST a ``endpoint``.
+        uploader_func: Transformación opcional aplicada al ``DataFrame``
+            leído del CSV antes de validarlo y cargarlo.
+        uploader_help: Texto de ayuda del uploader CSV.
+
+    Returns:
+        El valor vigente del filtro avanzado. El caller debe usar este
+        retorno para refetchar datos; no necesita leer ``session_state``.
+
+    Side Effects:
+        - ``st.session_state[report_filter_key(key)]``: espejo del
+          filtro avanzado para otros consumidores.
+        - ``st.session_state[report_data_version_key(key)]``: contador
+          que el caller puede usar como ``update_trigger`` de caché.
+        - ``st.session_state[f"temp_file_{key}"]``: binario del Excel
+          pendiente de descarga.
     """
     # CRÍTICO: Streamlit ejecuta ``@st.fragment`` en un contexto de script
     # separado donde los ``ContextVar`` (token) NO se heredan del script
     # principal. Sin esta sincronización, ``post_request`` (línea más abajo)
     # fallaría con ``APIConnectionError("No hay token de sesión...")``.
     token = sync_session_token(st.session_state.get("token"))
+
+    data_version_key: str = report_data_version_key(key)
+    if data_version_key not in st.session_state:
+        st.session_state[data_version_key] = 0
 
     st.markdown(f"# {title}")
     st.write(description)
@@ -104,14 +172,12 @@ def report_template(
         filtro_avanzado = text_input_advance_filter(
             key="text_input_advance_filter-" + key
         )
-        if f"{key}_uploader_iteration" not in st.session_state:
-            st.session_state[f"{key}_uploader_iteration"] = 0
 
         uploaded_file = (
             st.file_uploader(
                 f"Cargar CSV de {title}",
                 type=["csv"],
-                key=f"{key}_upload_file_{st.session_state[f'{key}_uploader_iteration']}",
+                key=f"{key}_upload_file_{st.session_state[data_version_key]}",
                 label_visibility="visible",
                 disabled=not has_upload,  # Add this line to disable the uploader if has_upload is False´
                 accept_multiple_files=False,
@@ -200,14 +266,22 @@ def report_template(
                                         st.divider()
                             else:
                                 st.balloons()
-                                st.session_state[f"{key}_uploader_iteration"] += 1
+                                st.session_state[data_version_key] += 1
                                 time.sleep(3)
                                 st.rerun()
 
-    # Sincronizamos con el session_state para que 'render' lo vea
-    if st.session_state.get(f"{key}_advanced_filter") != filtro_avanzado:
-        st.session_state[f"{key}_advanced_filter"] = filtro_avanzado
+    # Sincronizamos con session_state (por si otra capa lo lee) y, si el
+    # filtro cambió, forzamos un rerun completo: un cambio dentro del
+    # fragmento NO re-ejecuta la página exterior, que es quien refetcha.
+    filter_key: str = report_filter_key(key)
+    previous_filter: str | None = st.session_state.get(filter_key)
+    if previous_filter is None:
+        st.session_state[filter_key] = filtro_avanzado
+    elif previous_filter != filtro_avanzado:
+        st.session_state[filter_key] = filtro_avanzado
         st.rerun()  # Forzamos que toda la página (fuera del fragmento) reaccione
+
+    return filtro_avanzado
 
 
 # --------------------------------------------------
