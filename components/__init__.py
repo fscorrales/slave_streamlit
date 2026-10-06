@@ -12,7 +12,7 @@ from components.buttons import (
 )
 from components.dataframes import dataframe
 from components.multiselects import multiselect_filter
-from components.text_inputs import text_input_advance_filter
+from components.text_inputs import text_filters_bar, text_input_advance_filter
 
 __all__ = [
     "button_add",
@@ -24,6 +24,7 @@ __all__ = [
     "button_submit",
     "button_update",
     "dataframe",
+    "text_filters_bar",
     "text_input_advance_filter",
     "multiselect_filter",
 ]

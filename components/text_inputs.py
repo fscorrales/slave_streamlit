@@ -1,4 +1,4 @@
-__all__ = ["text_input_advance_filter", "op_map"]
+__all__ = ["text_input_advance_filter", "text_filters_bar", "op_map"]
 
 from typing import Any
 
@@ -82,3 +82,46 @@ op_map: dict[str, str] = {
     "=": "$eq",
     "~": "$regex",
 }
+
+
+# --------------------------------------------------
+def text_filters_bar(
+    filters: list[dict[str, str]],
+    key_prefix: str,
+    columns: int = 3,
+) -> dict[str, str]:
+    """
+    Barra de filtros de texto particulares (frontend puro) en columnas.
+
+    Cada filtro requiere al menos ``label`` y ``column``; acepta
+    ``placeholder`` y ``help``. La key del widget se deriva como
+    ``{column}_{key_prefix}`` para evitar colisiones entre reportes.
+
+    No toca la API: los valores retornados se aplican en cascada sobre
+    el DataFrame con
+    ``services.process_df.apply_text_filters()``.
+
+    Args:
+        filters: Lista de dicts con la configuración de cada filtro
+            (``label``, ``column``, ``placeholder?``, ``help?``).
+        key_prefix: Prefijo único del reporte para las keys de widgets.
+        columns: Cantidad de columnas por fila.
+
+    Returns:
+        Dict ``{columna: valor_ingresado}``; vacío si ``filters`` está
+        vacío.
+    """
+    if not filters:
+        return {}
+
+    valores: dict[str, str] = {}
+    cols = st.columns(columns)
+    for index, filtro in enumerate(filters):
+        with cols[index % columns]:
+            valores[filtro["column"]] = st.text_input(
+                filtro["label"],
+                placeholder=filtro.get("placeholder", ""),
+                help=filtro.get("help"),
+                key=f"{filtro['column']}_{key_prefix}",
+            )
+    return valores

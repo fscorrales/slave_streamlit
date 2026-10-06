@@ -13,11 +13,12 @@ import utils.exceptions as ex
 from services.data_fetcher import get_precarizados
 from utils.endpoints import Endpoints
 from views import (
+    ReportState,
     dataframe_with_buttons,
     modal_delete_registro_gral,
     modal_precarizado,
     report_data_version_key,
-    report_template,
+    report_header,
 )
 
 REPORTE = "precarizados"
@@ -53,9 +54,9 @@ def delete_precarizado(datos_eliminar: dict[str, Any]) -> None:
 
 # --------------------------------------------------
 def render() -> None:
-    # La cabecera (título, filtro, export) es un @st.fragment que retorna
-    # el filtro vigente: no hace falta leerlo de session_state.
-    filtro_actual: str = report_template(
+    # La cabecera (título, filtros, export) es un @st.fragment que retorna
+    # el estado del reporte: no hace falta leer nada de session_state.
+    state: ReportState = report_header(
         key=REPORTE,
         title=REPORTE.capitalize(),
         description="",
@@ -63,17 +64,15 @@ def render() -> None:
         has_export=True,
     )
 
-    # Versión de datos: se incrementa al crear/editar/borrar registros y
-    # sirve de update_trigger del @st.cache_data de get_precarizados
-    # (services/data_fetcher.py, autorizado por AGENTS.md §1).
-    trigger: int = st.session_state.get(report_data_version_key(REPORTE), 0)
-
     # Ejecutamos la lógica con el servicio cacheado (@st.cache_data vive
-    # en services/data_fetcher.py desde que AGENTS.md §1 lo autorizó)
+    # en services/data_fetcher.py desde que AGENTS.md §1 lo autorizó).
+    # state.data_version se incrementa al crear/editar/borrar registros
+    # y sirve de update_trigger para invalidar ese caché.
     df_precarizados = pd.DataFrame()  # type: ignore  # fallback por defecto
     try:
         df_precarizados = get_precarizados(
-            filtro_avanzado=filtro_actual, update_trigger=trigger
+            filtro_avanzado=state.filtro_avanzado,
+            update_trigger=state.data_version,
         )
         if df_precarizados.empty:
             st.info("No se encontraron resultados.")

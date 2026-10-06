@@ -14,10 +14,10 @@ from components import (
     button_edit,
     button_export,
     dataframe,
-    multiselect_filter,
-    text_input_advance_filter,
+    text_filters_bar,
 )
 from services import get_ejercicios_list, get_honorarios
+from services.process_df import apply_text_filters
 from utils import (
     APIConnectionError,
     APIResponseError,
@@ -27,12 +27,27 @@ from utils import (
     formato_moneda_ar,
 )
 from views import (
+    ReportState,
     dataframe_with_buttons,
     modal_delete_registro_gral,
     modal_honorarios,
+    report_header,
 )
 
 REPORTE = "honorarios"
+
+# Filtros particulares de la grilla (frontend puro): se renderizan con
+# text_filters_bar() y se aplican en cascada con apply_text_filters()
+# sobre el DataFrame ya agrupado, sin volver a tocar la API.
+FILTROS_TABLA: list[dict[str, str]] = [
+    {"label": "Mes/Año", "column": "mes", "placeholder": "Ej: 01/2026"},
+    {
+        "label": "Nro Comprobante",
+        "column": "nro_comprobante",
+        "placeholder": "Ej: 1175",
+    },
+    {"label": "Tipo", "column": "tipo", "placeholder": "Ej: Honorario"},
+]
 
 
 # --------------------------------------------------
@@ -58,42 +73,10 @@ def dataframe_honorarios_comprobantes(
         df_filtrado = df_filtrado.sort_values(
             by=["fecha", "nro_comprobante"], ascending=False
         ).reset_index(drop=True)
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            f_mes = st.text_input(
-                "Mes/Año",
-                placeholder="Ej: 01/2026",
-                key=f"f_mes_{REPORTE}",
-            )
-        with col2:
-            f_nro_comprobante = st.text_input(
-                "Nro Comprobante",
-                placeholder="Ej: 1175",
-                key=f"f_nro_comprobante_{REPORTE}",
-            )
-        with col3:
-            f_tipo = st.text_input(
-                "Tipo",
-                placeholder="Ej: Honorario",
-                key=f"f_tipo_{REPORTE}",
-            )
-
-        # 2. Aplicamos los filtros en cascada sobre el DataFrame (Frontend Puro)
-        if f_mes:
-            df_filtrado = df_filtrado[
-                df_filtrado["mes"].astype(str).str.contains(f_mes, case=False)
-            ]
-        if f_nro_comprobante:
-            df_filtrado = df_filtrado[
-                df_filtrado["nro_comprobante"]
-                .astype(str)
-                .str.contains(f_nro_comprobante, case=False)
-            ]
-        if f_tipo:
-            df_filtrado = df_filtrado[
-                df_filtrado["tipo"].astype(str).str.contains(f_tipo, case=False)
-            ]
+        # 2. Filtros particulares (frontend puro, sin llamadas a la API):
+        # declarativos en FILTROS_TABLA y aplicados en cascada.
+        valores_filtro = text_filters_bar(FILTROS_TABLA, key_prefix=REPORTE)
+        df_filtrado = apply_text_filters(df_filtrado, valores_filtro)
 
         event = dataframe(
             df_filtrado,
@@ -248,7 +231,6 @@ def dataframe_honorarios_comprobantes(
 
 # --------------------------------------------------
 def render() -> None:
-
     mis_filtros = [
         {
             "label": "Elija los ejercicios a consultar",
@@ -259,92 +241,22 @@ def render() -> None:
         },
     ]
 
-    honorarios_template(
+    # Cabecera compartida (@st.fragment): multiselects server-side +
+    # filtro avanzado. Retorna el estado; no hay que leer session_state.
+    state: ReportState = report_header(
         key=REPORTE,
         title=REPORTE.capitalize(),
         description="",
+        endpoint=Endpoints.SLAVE_HONORARIOS.value,
         filters_config=mis_filtros,
+        # El export server-side ({endpoint}/export) de honorarios todavía
+        # no está habilitado; la grilla conserva su export propio.
+        has_export=False,
     )
 
-
-@st.fragment  # Permite que los filtros internos no recarguen TODA la página
-# --------------------------------------------------
-def honorarios_template(
-    key: str,
-    title: str,
-    description: str,
-    filters_config: list,
-):
-    """
-    Vista reutilizable.
-    filters_config: Lista de dicts con ['label', 'options', 'key', 'default']
-    """
-    st.markdown(f"# {title}")
-    st.write(description)
-
-    selections = []
-
-    # 0. Lógica de Exportación
-    # def download_file():
-    #     # Validamos filtros antes de proceder
-    #     if all(s[1] is not None for s in selections):
-    #         try:
-    #             # Limpiamos basura anterior antes de empezar el proceso pesado
-    #             if f"temp_file_{key}" in st.session_state:
-    #                 del st.session_state[f"temp_file_{key}"]
-    #             with st.spinner("Preparando archivos Excel..."):
-    #                 # Llamada a la API que devuelve StreamingResponse
-    #                 excel_binario = fetch_excel_stream(
-    #                     f"{Endpoints.SLAVE_HONORARIOS.value}/export",
-    #                     params_preparation(selections, filtro_avanzado),
-    #                 )
-
-    #                 if excel_binario:
-    #                     # IMPORTANTE: Como st.download_button recarga la página,
-    #                     # a veces es mejor usar un link o guardarlo en session_state
-    #                     st.session_state[f"temp_file_{key}"] = excel_binario
-    #                     st.success("✅ Archivo generado con éxito.")
-    #                     st.rerun()
-
-    #         except Exception as e:
-    #             st.error(f"Error al exportar: {e}")
-
-    # 1. Renderizar Filtros
-    # --- Filtros (Estado local del componente) ---
-    with st.container(horizontal=True, vertical_alignment="bottom"):
-        for i, f_conf in enumerate(filters_config):
-            # Guardamos la selección en un diccionario para la API
-            val = multiselect_filter(
-                label=f_conf["label"],
-                options=f_conf["options"],
-                default=f_conf.get("default", []),
-                key=f_conf["key"],  # Key única para evitar conflictos en Streamlit
-            )
-            # El nombre de la clave aquí debe coincidir con lo que espera tu API
-            selections.append((f_conf["query_param"], val))
-
-        filtro_avanzado = text_input_advance_filter(
-            key="text_input_advance_filter-" + key
-        )
-
-        # Aquí podrías integrar tu logic de exportación
-        # if f"temp_file_{key}" not in st.session_state:
-        #     if button_export("Exportar a Excel", key=f"button_export_{key}"):
-        #         download_file()
-        # else:
-        #     # Si hay archivo, el botón "Exportar" desaparece y aparece el de "Descargar"
-        #     st.download_button(
-        #         label="📥 GUARDAR EXCEL",
-        #         data=st.session_state[f"temp_file_{key}"],
-        #         file_name=f"reporte_{key}.xlsx",
-        #         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        #         key=f"btn_dl_{key}",
-        #         type="primary",  # Lo ponemos en color para que resalte
-        #         on_click=lambda: st.session_state.pop(f"temp_file_{key}"),
-        #     )
-
-    # 2. Validar que no haya filtros vacíos
-    if any(not s[1] for s in selections):
+    # Validación: los multiselects son obligatorios; el filtro avanzado
+    # es opcional.
+    if any(not valores for _, valores in state.selections):
         st.warning(
             "Seleccione al menos un valor en cada filtro obligatorio. El filtro avanzado es opcional"
         )
@@ -352,42 +264,35 @@ def honorarios_template(
 
     df_honorarios = pd.DataFrame()
 
-    # 3. Lógica de Fetch Iterativo (El equivalente al v-for de Vue + API calls)
+    # Fetch con caché (@st.cache_data en services/data_fetcher.py);
+    # honorarios_dataframes_iteration lo incrementan los CRUD al guardar.
     try:
-        if "honorarios_dataframes_iteration" not in st.session_state:
-            st.session_state["honorarios_dataframes_iteration"] = 0
-        trigger = st.session_state["honorarios_dataframes_iteration"]
+        trigger = int(st.session_state.get("honorarios_dataframes_iteration", 0))
         df_honorarios = get_honorarios(
-            selections=selections,
-            filtro_avanzado=filtro_avanzado,
+            selections=state.selections,
+            filtro_avanzado=state.filtro_avanzado,
             update_trigger=trigger,
         )
 
         if df_honorarios.empty:
             st.info("No se encontraron resultados.")
-        # else:
-        #     st.session_state[f"data_{key}_carga"] = df_final
-        #     st.session_state[f"data_{key}_retenciones"] = df_final_ret
 
     except APIConnectionError as e:
         st.error(f"⚠️ Error de conexión: {e}")
     except APIResponseError as e:
         st.error(f"⚠️ Error de API: {e}")
 
-    # 4. Mostrar resultados (usando session_state para que no desaparezcan)
+    # Mostrar resultados y el detalle del comprobante seleccionado
     if not df_honorarios.empty:
         event, df_filtrado = dataframe_honorarios_comprobantes(
-            df_honorarios.copy(), key=f"{key}_df_comprobantes"
+            df_honorarios.copy(), key=f"{REPORTE}_df_comprobantes"
         )
 
-        # 2. Lógica de filtrado dinámico
-        # Verificamos si hay alguna fila seleccionada
+        # Lógica de filtrado dinámico sobre la fila seleccionada
         if len(event.selection.rows) > 0:
             selected_row_index = event.selection.rows[0]
-            # Extraemos el id_carga de esa fila
             selected_id = df_filtrado.iloc[selected_row_index]["nro_comprobante"]
 
-            # st.info(f"Mostrando detalles para ID Carga: **{selected_id}**")
             with st.container(horizontal=True, border=False, width="stretch"):
                 df_imp = df_honorarios[df_honorarios["nro_comprobante"] == selected_id]
                 df_imp = (
@@ -401,7 +306,7 @@ def honorarios_template(
                 ).reset_index(drop=True)
                 dataframe_with_buttons(
                     df_imp,
-                    key=f"{key}_df_imp",
+                    key=f"{REPORTE}_df_imp",
                     column_order=[
                         "actividad",
                         "partida",
@@ -429,21 +334,24 @@ def honorarios_template(
                     .to_dict()
                 )
                 payload_retenciones = build_retenciones_payload(df_suma)
-                # Extraemos los datos crudos
                 lista_ret = payload_retenciones.get("retenciones", [])
                 # Ordenamos la lista de retenciones por el código (convertido a entero)
                 lista_ordenada = sorted(lista_ret, key=lambda x: int(x["codigo"]))
                 df_ret = pd.DataFrame(lista_ordenada)
-                df_ret["importe"] = df_ret["importe"].apply(formato_moneda_ar)
-                dataframe_with_buttons(
-                    df_ret,
-                    key=f"{key}_df_ret",
-                    column_order=[
-                        "codigo",
-                        "importe",
-                    ],
-                    show_buttons=False,
-                )
+                # build_retenciones_payload omite importes en 0: sin
+                # retenciones, df_ret queda sin columnas y no hay grilla
+                # que mostrar (evita el KeyError en 'importe').
+                if not df_ret.empty:
+                    df_ret["importe"] = df_ret["importe"].apply(formato_moneda_ar)
+                    dataframe_with_buttons(
+                        df_ret,
+                        key=f"{REPORTE}_df_ret",
+                        column_order=[
+                            "codigo",
+                            "importe",
+                        ],
+                        show_buttons=False,
+                    )
 
 
 if __name__ == "__main__":
