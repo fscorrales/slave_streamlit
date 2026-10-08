@@ -83,6 +83,10 @@ def dataframe_honorarios_comprobantes(
         valores_filtro = text_filters_bar(FILTROS_TABLA, key_prefix=REPORTE)
         df_filtrado = apply_text_filters(df_filtrado, valores_filtro)
 
+        df_filtrado["importe_bruto"] = df_filtrado["importe_bruto"].apply(
+            formato_moneda_ar
+        )
+
         event = dataframe(
             df_filtrado,
             key=f"df_comprobantes_{key}",

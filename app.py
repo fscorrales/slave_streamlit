@@ -16,7 +16,7 @@ from views.aux_tables import report_data_version_key
 from views.login import render_login
 
 st.set_page_config(
-    page_title="INVICO Slave",
+    page_title="SLAVE",
     page_icon="⛓️",
     layout="wide",
 )
@@ -172,8 +172,7 @@ def build_navigation() -> None:
             #    sobreviva al rerun (un fallo parcial no debe pasar
             #    inadvertido). Una sync OK lo limpia.
             st.session_state["informe_errores_sincronizacion"] = [
-                f"⚠️ **{recurso}**: {mensaje}"
-                for recurso, mensaje in errores.items()
+                f"⚠️ **{recurso}**: {mensaje}" for recurso, mensaje in errores.items()
             ]
 
             if not errores:

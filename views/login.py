@@ -27,7 +27,7 @@ def render_login() -> None:
     _, col, _ = st.columns([1, 2, 1])
 
     with col:
-        st.title("Acceso a INVICO Slave")
+        st.title("Acceso a SLAVE")
 
         tab_login, tab_register = st.tabs(["🔒 Iniciar Sesión", "📝 Registrarse"])
 
