@@ -40,7 +40,7 @@ def normalize_name_for_match(name: object) -> str:
 
 # --------------------------------------------------
 def build_retenciones_payload(data: dict) -> dict:
-    # Mapeo de campos del objeto a códigos contables de ICARO
+    # Mapeo de campos del objeto a códigos contables de Slave
     mapeo_codigos = {
         "iibb": "101",
         "sellos": "102",

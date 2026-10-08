@@ -2,7 +2,7 @@
 """
 Author : Fernando Corrales <fscpython@gmail.com>
 Date   : 28-ago-2026
-Purpose: Migrate from old Icaro.sqlite to new DB
+Purpose: Migrate from old Slave .csv to new DB
 """
 
 __all__ = ["SlaveMongoMigrator"]

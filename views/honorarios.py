@@ -1,6 +1,6 @@
 """
 Author: Fernando Corrales <fscpython@gmail.com>
-Purpose: ICARO's Home Page
+Purpose: Slave's Listado Honorarios Page
 """
 
 from datetime import datetime

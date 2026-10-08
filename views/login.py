@@ -61,7 +61,7 @@ def render_login() -> None:
                             }
 
                             with st.status(
-                                "Preparando ICARO...", expanded=True
+                                "Preparando Slave...", expanded=True
                             ) as status:
                                 st.write("Sincronizando Precarizados...")
                                 data_version_key = report_data_version_key(
