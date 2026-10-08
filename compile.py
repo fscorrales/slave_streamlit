@@ -4,18 +4,18 @@ import shutil
 import PyInstaller.__main__
 
 # --- CONFIGURACIÓN ---
-APP_NAME = "INVICO"  # Nombre de tu aplicación
+APP_NAME = "Slave"  # Nombre de tu aplicación
 ENTRY_POINT = "run.py"  # El script lanzador
 STREAMLIT_APP = "app.py"  # Tu app principal
-SRC_DIR = "src"  # Carpeta con tu lógica y .env
+# SRC_DIR = "src"  # Carpeta con tu lógica y .env
 STREAMLIT_CONFIG = ".streamlit"
 ICON_FILE = "icono_invico.ico"  # El archivo de icono de la app
 
-HIDDEN_IMPORTS = [
-    "src.automation.sscc.banco_invico_runner",
-    "src.automation.sgf.resumen_rend_obras_runner",
-    "src.automation.sgf.resumen_rend_prov_runner",
-]
+# HIDDEN_IMPORTS = [
+#     "src.automation.sscc.banco_invico_runner",
+#     "src.automation.sgf.resumen_rend_obras_runner",
+#     "src.automation.sgf.resumen_rend_prov_runner",
+# ]
 
 
 def build():
@@ -43,14 +43,14 @@ def build():
         "--copy-metadata=playwright",
         # Inclusión de archivos y carpetas
         f"--add-data={STREAMLIT_APP}{os.pathsep}.",
-        f"--add-data={SRC_DIR}{os.pathsep}{SRC_DIR}",
+        # f"--add-data={SRC_DIR}{os.pathsep}{SRC_DIR}",
         f"--add-data={STREAMLIT_CONFIG}{os.pathsep}.streamlit",
         f"--add-data=pyproject.toml{os.pathsep}.",
         f"--icon={ICON_FILE}",
     ]
 
-    for module in HIDDEN_IMPORTS:
-        args.append(f"--hidden-import={module}")
+    # for module in HIDDEN_IMPORTS:
+    #     args.append(f"--hidden-import={module}")
 
     # 3. Ejecutar PyInstaller
     print(f"Iniciando compilación de {APP_NAME}...")
