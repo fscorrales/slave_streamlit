@@ -369,9 +369,11 @@ def get_honorarios(
                 if df_local_filtrado is not None:
                     return df_local_filtrado
 
-    # 2. Consultar la API
+    # 2. Consultar la API (``queryFilter`` = filtro avanzado, igual
+    # que en get_precarizados; sin esta clave el filtro se ignoraba).
     params_peticion = {
         "limit": 0,
+        "queryFilter": filtro_avanzado,
     }
     for nombre_param, valores in selections:
         if valores:
@@ -454,9 +456,10 @@ def sincronizar_caches(
     **Honorarios NO se descarga aquí**: cada vista sólo necesita el
     ejercicio que está viendo (lo trae ella misma con el trigger ya
     invalidado por el caller) y ``honorarios_cache.parquet`` se
-    refresca solo, con su descarga completa, al abrir un modal
-    (:func:`get_referencias_honorarios`). Así el sync no baja decenas
-    de miles de documentos que nadie va a mirar.
+    refresca (o se lee localmente) al cargar la vista de Honorarios
+    o al abrir un modal, vía :func:`get_referencias_honorarios`. Así
+    el sync no baja decenas de miles de documentos que nadie va a
+    mirar.
 
     El ``trigger_precarizados`` **debe ser > 0**: con ``0``,
     :func:`get_precarizados` leería el Parquet vigente sin consultar

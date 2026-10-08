@@ -16,11 +16,16 @@ from components import (
     dataframe,
     text_filters_bar,
 )
-from services import get_ejercicios_list, get_honorarios
+from services import (
+    get_ejercicios_list,
+    get_honorarios,
+    get_referencias_honorarios,
+)
 from services.process_df import apply_text_filters
 from utils import (
     APIConnectionError,
     APIResponseError,
+    AppBaseException,
     Endpoints,
     build_comprobante_xlsx,
     build_retenciones_payload,
@@ -287,6 +292,22 @@ def render() -> None:
         event, df_filtrado = dataframe_honorarios_comprobantes(
             df_honorarios.copy(), key=f"{REPORTE}_df_comprobantes"
         )
+
+        # Precalienta las referencias del modal de honorarios (tipos
+        # y ctas. ctes.) con el mismo trigger. Sin esto, la primera
+        # apertura del modal (edición, o alta tras subir el CSV)
+        # descarga la colección completa y el diálogo tarda; acá ese
+        # costo se paga -una sola vez por trigger- durante la carga
+        # de la página y al clicar ya hay caché en memoria.
+        try:
+            get_referencias_honorarios(update_trigger=trigger)
+        except AppBaseException as exc:
+            # No corta la página: el modal informa el mismo error y
+            # deja los selectbox en escritura libre.
+            st.warning(
+                f"⚠️ No se pudieron precargar los tipos/cuentas del "
+                f"modal de honorarios: {exc}"
+            )
 
         # Lógica de filtrado dinámico sobre la fila seleccionada
         if len(event.selection.rows) > 0:

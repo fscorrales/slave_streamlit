@@ -471,16 +471,17 @@ def modal_honorarios(
     # ═══════════ PREPARACIÓN COMÚN (ambos modos) ═══════════
     update_trigger = int(st.session_state.get(session_state_update_key, 0))
 
-    try:
-        tipos, ctas_ctes = get_referencias_honorarios(update_trigger)
-    except AppBaseException as exc:
-        # No silenciamos: informamos y dejamos los selectbox en modo
-        # escritura libre (accept_new_options=True) como fallback.
-        st.warning(
-            f"⚠️ No se pudieron cargar los tipos de comprobante y/o las "
-            f"cuentas corrientes: {exc}"
-        )
-        tipos, ctas_ctes = [], []
+    # El padrón de Precarizados se invalida con SU propio trigger (no
+    # con el de honorarios): así comparte caché con el sync y con la
+    # vista de Precarizados en vez de forzar una llamada a la API.
+    trigger_precarizados = int(
+        st.session_state.get(report_data_version_key("precarizados"), 0)
+    )
+
+    # NOTA: get_referencias_honorarios (tipos / ctas. ctes.) se resuelve
+    # RECIÉN antes de los widgets de carátula: descargar la colección
+    # completa aquí retrasaba el dibujo del modal en la primera
+    # apertura del modo alta, donde el Paso 1 sólo muestra el uploader.
 
     # Pre-check de duplicados: usa los honorarios ya cargados en la
     # vista (gratis, sin llamada extra). Es best-effort porque sólo ve
@@ -572,7 +573,7 @@ def modal_honorarios(
             return
 
         try:
-            df_precarizados = get_precarizados(update_trigger=update_trigger)
+            df_precarizados = get_precarizados(update_trigger=trigger_precarizados)
         except AppBaseException as exc:
             st.error(f"⚠️ No se pudo obtener el padrón de Precarizados: {exc}")
             _barra_cancelar()
@@ -618,6 +619,23 @@ def modal_honorarios(
             st.dataframe(df_merged.head(15), width="stretch")
 
         st.markdown("#### Paso 2 · Datos del Comprobante")
+    # ═══════════ REFERENCIAS · TIPOS / CTAS. CTES. ═══════════
+    # Se resuelven recién acá -y no al abrir el modal- porque sólo las
+    # necesitan los selectbox de la carátula: en el modo alta, el Paso 1
+    # (uploader) se dibuja sin tocar la API, así que la primera apertura
+    # del botón "Agregar" es inmediata. La vista de Honorarios
+    # precalienta este caché al cargar la página.
+    try:
+        tipos, ctas_ctes = get_referencias_honorarios(update_trigger)
+    except AppBaseException as exc:
+        # No silenciamos: informamos y dejamos los selectbox en modo
+        # escritura libre (accept_new_options=True) como fallback.
+        st.warning(
+            f"⚠️ No se pudieron cargar los tipos de comprobante y/o las "
+            f"cuentas corrientes: {exc}"
+        )
+        tipos, ctas_ctes = [], []
+
     # ═══════════ WIDGETS DE CARÁTULA (compartidos) ═══════════
     # Valores iniciales según modo. Usamos ``setdefault`` (patrón de
     # ``modal_precarizado``) para poder pre-cargar la carátula en
@@ -792,7 +810,7 @@ def modal_honorarios(
                 if cambio_a_honorarios:
                     try:
                         df_precarizados = get_precarizados(
-                            update_trigger=update_trigger
+                            update_trigger=trigger_precarizados
                         )
                     except AppBaseException as exc:
                         st.error(
