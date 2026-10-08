@@ -9,8 +9,10 @@ import time
 
 import streamlit as st
 
+from services import sincronizar_caches
 from utils.context import clear_token, set_token
 from utils.version import get_version
+from views.aux_tables import report_data_version_key
 from views.login import render_login
 
 st.set_page_config(
@@ -82,6 +84,41 @@ def initialize_state() -> None:
 
 
 # ──────────────────────────────────────────────
+def incrementar_triggers_sincronizacion() -> int:
+    """
+    Incrementa (creándolos si faltan) los triggers de ``session_state``
+    que invalidan el ``@st.cache_data`` de cada colección.
+
+    Se incrementan ``precarizados_data_version`` y
+    ``honorarios_dataframes_iteration`` (éste obliga a las vistas de
+    honorarios a ir a la API en vez del snapshot rápido de 24h) y, de
+    paso, cualquier otra clave ``*_data_version`` ya presente en la
+    sesión para que futuras vistas entren en la misma invalidación
+    masiva.
+
+    Returns:
+        Valor ya incrementado del trigger de precarizados, listo para
+        pasarse como ``update_trigger`` a ``sincronizar_caches``.
+    """
+    claves: list[str] = [
+        report_data_version_key("precarizados"),
+        "honorarios_dataframes_iteration",
+    ]
+    # Barrido genérico de otras vistas registradas en la sesión
+    # (claves únicas: las dos conocidas ya están en la lista).
+    claves.extend(
+        clave
+        for clave in list(st.session_state.keys())
+        if clave.endswith("_data_version") and clave not in claves
+    )
+
+    for clave in claves:
+        st.session_state[clave] = int(st.session_state.get(clave, 0)) + 1
+
+    return int(st.session_state[report_data_version_key("precarizados")])
+
+
+# ──────────────────────────────────────────────
 # Navegación MPA
 # ──────────────────────────────────────────────
 def build_navigation() -> None:
@@ -111,6 +148,53 @@ def build_navigation() -> None:
 
     # Sidebar: Info de usuario, logout y versión
     with st.sidebar:
+        if st.button(
+            "🔄 Sincronizar Datos",
+            use_container_width=True,
+            help=(
+                "Invalida los cachés (memoria y triggers), baja el "
+                "padrón de Precarizados y deja a cada vista bajando "
+                "sus datos frescos desde la API."
+            ),
+        ):
+            # 1) Invalida los triggers de sesión (grillas y referencias).
+            trigger_precarizados = incrementar_triggers_sincronizacion()
+
+            # 2) Sincronización ligera: limpia la memoria y refresca el
+            #    padrón. Honorarios sólo se invalida: cada vista baja
+            #    su ejercicio y el Parquet lo refrescan los modales.
+            with st.spinner("Sincronizando con la API..."):
+                actualizados, errores = sincronizar_caches(
+                    trigger_precarizados=trigger_precarizados,
+                )
+
+            # 3) Informe de fallos: se persiste en sesión para que
+            #    sobreviva al rerun (un fallo parcial no debe pasar
+            #    inadvertido). Una sync OK lo limpia.
+            st.session_state["informe_errores_sincronizacion"] = [
+                f"⚠️ **{recurso}**: {mensaje}"
+                for recurso, mensaje in errores.items()
+            ]
+
+            if not errores:
+                resumen: str = " · ".join(
+                    f"{recurso}: {cantidad} registros"
+                    for recurso, cantidad in actualizados.items()
+                )
+                st.toast(
+                    f"✅ Sincronizado — {resumen} · Honorarios: "
+                    "caché invalidado (bajado por vista/modal)",
+                    icon="🚀",
+                )
+                time.sleep(1)  # Deja ver el toast antes del rerun
+                st.rerun()
+            # Con errores NO se rerunea: el informe de abajo queda a
+            # la vista y el usuario puede reintentar.
+
+        # Errores del último intento de sincronización (si los hubo).
+        for mensaje in st.session_state.get("informe_errores_sincronizacion", []):
+            st.error(mensaje)
+
         st.divider()
 
         # Bloque de Usuario y Logout

@@ -13,6 +13,7 @@ from services.data_fetcher import (
     get_precarizados,
     get_referencias_factureros,
     get_referencias_honorarios,
+    sincronizar_caches,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "get_referencias_honorarios",
     "get_ejercicios_list",
     "get_honorarios",
+    "sincronizar_caches",
 ]
