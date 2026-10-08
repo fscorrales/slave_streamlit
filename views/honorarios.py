@@ -298,11 +298,10 @@ def render() -> None:
         )
 
         # Precalienta las referencias del modal de honorarios (tipos
-        # y ctas. ctes.) con el mismo trigger. Sin esto, la primera
-        # apertura del modal (edición, o alta tras subir el CSV)
-        # descarga la colección completa y el diálogo tarda; acá ese
-        # costo se paga -una sola vez por trigger- durante la carga
-        # de la página y al clicar ya hay caché en memoria.
+        # y ctas. ctes.) con el mismo trigger. Son endpoints ligeros
+        # con su propio Parquet, pero precalentarlos acá -una sola vez
+        # por trigger- evita que la primera apertura del modal pague
+        # el costo de la llamada al clicar.
         try:
             get_referencias_honorarios(update_trigger=trigger)
         except AppBaseException as exc:

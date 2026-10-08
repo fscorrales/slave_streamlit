@@ -479,9 +479,9 @@ def modal_honorarios(
     )
 
     # NOTA: get_referencias_honorarios (tipos / ctas. ctes.) se resuelve
-    # RECIÉN antes de los widgets de carátula: descargar la colección
-    # completa aquí retrasaba el dibujo del modal en la primera
-    # apertura del modo alta, donde el Paso 1 sólo muestra el uploader.
+    # RECIÉN antes de los widgets de carátula: sólo la necesitan los
+    # selectbox de la carátula, así que en el modo alta el Paso 1
+    # (uploader) se dibuja sin tocar la API.
 
     # Pre-check de duplicados: usa los honorarios ya cargados en la
     # vista (gratis, sin llamada extra). Es best-effort porque sólo ve
@@ -623,8 +623,9 @@ def modal_honorarios(
     # Se resuelven recién acá -y no al abrir el modal- porque sólo las
     # necesitan los selectbox de la carátula: en el modo alta, el Paso 1
     # (uploader) se dibuja sin tocar la API, así que la primera apertura
-    # del botón "Agregar" es inmediata. La vista de Honorarios
-    # precalienta este caché al cargar la página.
+    # del botón "Agregar" es inmediata. Son endpoints ligeros con su
+    # propio Parquet; la vista de Honorarios precalienta el caché al
+    # cargar la página.
     try:
         tipos, ctas_ctes = get_referencias_honorarios(update_trigger)
     except AppBaseException as exc:

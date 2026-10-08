@@ -6,9 +6,12 @@ Aplica ``@st.cache_data`` directamente sobre las funciones de servicio
 de modo que la capa de ``views/`` no necesita wrappers intermedios.
 
 Mantiene un fallback a caché Parquet local cuando la API no está
-disponible (modo degradado) y **no** contiene widgets interactivos de
-entrada de datos (``st.button``, ``st.text_input``, ``st.file_uploader``),
-los cuales pertenecen a la capa de UI (``AGENTS.md`` §1).
+disponible (modo degradado); el padrón de precarizados y
+la colección de honorarios se sirven sólo desde la API con
+``@st.cache_data`` (sin Parquet en disco). El módulo **no** contiene
+widgets interactivos de entrada de datos (``st.button``,
+``st.text_input``, ``st.file_uploader``), los cuales pertenecen a la
+capa de UI (``AGENTS.md`` §1).
 """
 
 __all__ = [
@@ -29,16 +32,23 @@ import pandas as pd
 import streamlit as st
 
 import utils.exceptions as ex
-from services.api_slave import fetch_dataframe
+from services.api_slave import fetch_data, fetch_dataframe
 from utils.endpoints import Endpoints
 from utils.handling_path import get_cache_path
 
 logger = logging.getLogger(__name__)
 
-# Archivos Parquet del caché en disco (lectura rápida cuando
-# ``update_trigger == 0`` y fallback degradado si la API falla).
-_PARQUET_PRECARIZADOS: str = "precarizados_cache.parquet"
-_PARQUET_HONORARIOS: str = "honorarios_cache.parquet"
+# Archivos Parquet del caché en disco de las listas de referencia
+# (lectura rápida cuando ``update_trigger == 0`` y fallback degradado
+# si la API falla). Precarizados y honorarios NO persisten en Parquet:
+# se sirven sólo desde la API con ``@st.cache_data``.
+_PARQUET_ACTIVIDADES: str = "factureros_actividades_cache.parquet"
+_PARQUET_PARTIDAS: str = "factureros_partidas_cache.parquet"
+_PARQUET_CTAS_CTES: str = "honorarios_ctas_ctes_cache.parquet"
+_PARQUET_TIPOS_COMPROBANTES: str = "honorarios_tipos_comprobantes_cache.parquet"
+
+# Columna única de los DataFrames de referencia persistidos en Parquet.
+_COLUMNA_REFERENCIA: str = "valor"
 
 
 # --------------------------------------------------
@@ -72,15 +82,159 @@ def _valores_unicos(df: pd.DataFrame, columna: str) -> list[str]:
 
 
 # --------------------------------------------------
+def _normalizar_referencia(datos: Any) -> list[str]:
+    """
+    Normaliza la respuesta JSON de un endpoint de referencia a una
+    lista ordenada de strings únicos.
+
+    Se espera una lista plana de valores (p.ej. ``["354", "AC"]``), la
+    forma que devuelven ``/slave/factureros/partidas``,
+    ``/slave/factureros/actividades``, ``/slave/honorarios/ctasCtes``
+    y ``/slave/honorarios/tiposComprobantes``. Un float entero pierde
+    la parte decimal (``354.0`` -> ``"354"``) y los nulos se descartan.
+
+    Args:
+        datos: Cuerpo JSON devuelto por la API.
+
+    Returns:
+        Lista ordenada de valores únicos; vacía si no hay valores.
+
+    Raises:
+        APIResponseError: Si la respuesta no es una lista (la API no
+            cumple el contrato esperado).
+    """
+    if not isinstance(datos, list):
+        raise ex.APIResponseError(
+            "Respuesta inesperada del endpoint de referencia: se esperaba "
+            f"una lista y se recibió {type(datos).__name__}."
+        )
+    valores: set[str] = set()
+    for item in datos:
+        if item is None:
+            continue
+        if isinstance(item, float) and item.is_integer():
+            valores.add(str(int(item)))
+        else:
+            valores.add(str(item).strip())
+    return sorted(valores - {""})
+
+
+# --------------------------------------------------
+def _leer_referencia_parquet(ruta: str) -> list[str]:
+    """
+    Lee una lista de referencia desde su Parquet de caché en disco.
+
+    Args:
+        ruta: Ruta al archivo Parquet.
+
+    Returns:
+        Lista ordenada de valores únicos; vacía si el archivo está
+        vacío o no tiene la columna de referencia.
+
+    Raises:
+        OSError: Si el archivo no se puede leer.
+        ValueError: Si el archivo no es un Parquet válido.
+    """
+    df: pd.DataFrame = pd.read_parquet(ruta)
+    return _valores_unicos(df, _COLUMNA_REFERENCIA)
+
+
+# --------------------------------------------------
+def _fetch_referencia(
+    endpoint: str,
+    parquet_name: str,
+    update_trigger: int = 0,
+) -> list[str]:
+    """
+    Obtiene una lista de referencia desde la API con caché Parquet.
+
+    Flujo de prioridad (el mismo que tenía :func:`get_precarizados`
+    antes de perder su Parquet en disco):
+
+        1. Si ``update_trigger == 0`` y existe un caché vigente
+           (< 24h), se retorna desde disco sin tocar la API.
+        2. Si no, se consulta la API.
+        3. Si la API falla y existe un caché (cualquier antigüedad), se
+           usa como fallback degradado.
+        4. Si la API falla y no hay caché, se re-lanza la excepción.
+
+    Args:
+        endpoint: Ruta relativa del endpoint de referencia.
+        parquet_name: Nombre del archivo Parquet de caché (se resuelve
+            contra ``utils.handling_path.get_cache_path``).
+        update_trigger: Incrementar para forzar la consulta a la API.
+
+    Returns:
+        Lista ordenada de valores únicos.
+
+    Raises:
+        APIConnectionError: Si la API falla y no hay caché disponible.
+        APIResponseError: Si la API retorna un error o una forma
+            inesperada y no hay caché disponible.
+    """
+    cache_path: str = os.path.join(get_cache_path(), parquet_name)
+
+    # 1. Lectura rápida desde el caché vigente
+    if update_trigger == 0 and os.path.exists(cache_path):
+        mtime: datetime = datetime.fromtimestamp(os.path.getmtime(cache_path))
+        if datetime.now() - mtime < timedelta(hours=24):
+            try:
+                return _leer_referencia_parquet(cache_path)
+            except (OSError, ValueError) as read_exc:
+                logger.warning(
+                    "No se pudo leer el caché local (%s): %s",
+                    type(read_exc).__name__,
+                    read_exc,
+                )
+
+    # 2. Consultar la API
+    try:
+        datos: Any = fetch_data(endpoint)
+        valores: list[str] = _normalizar_referencia(datos)
+    except (ex.APIConnectionError, ex.APIResponseError) as api_exc:
+        # 3. Fallback best-effort: usar caché viejo si existe
+        if os.path.exists(cache_path):
+            try:
+                logger.warning("API no disponible, usando caché local: %s", api_exc)
+                return _leer_referencia_parquet(cache_path)
+            except (OSError, ValueError) as read_exc:
+                logger.error(
+                    "No se pudo leer el caché local de fallback: %s",
+                    read_exc,
+                )
+        # 4. Sin fallback: propagar la excepción original
+        raise
+
+    # API exitosa: persistir el snapshot. Una lista vacía NO pisa el
+    # Parquet para no perder el fallback vigente.
+    if valores:
+        try:
+            pd.DataFrame({_COLUMNA_REFERENCIA: valores}).to_parquet(cache_path)
+        except (OSError, ValueError) as write_exc:
+            # Best-effort: los datos de la API ya están resueltos; el
+            # caché en disco se loguea pero no corta la respuesta.
+            logger.warning(
+                "No se pudo escribir el caché Parquet (%s): %s",
+                type(write_exc).__name__,
+                write_exc,
+            )
+
+    return valores
+
+
+# --------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_referencias_factureros(update_trigger: int = 0) -> tuple[list[str], list[str]]:
     """
     Retorna las listas únicas y ordenadas de ``actividad`` y ``partida``
     del padrón de factureros, para poblar los ``selectbox`` de los modales.
 
-    El ``@st.cache_data`` evita re-ejecutar la transformación en cada
-    re-render del diálogo; internamente delega en :func:`get_precarizados`
-    (que trae su propio caché y fallback a Parquet).
+    Consulta los endpoints ligeros dedicados
+    (``/slave/factureros/actividades`` y ``/slave/factureros/partidas``)
+    vía :func:`_fetch_referencia`, en vez de descargar el padrón
+    completo. Cada lista tiene su propio Parquet (lectura rápida < 24h
+    + fallback degradado) y el ``@st.cache_data`` agrega encima una
+    capa de memoria por re-render.
 
     Args:
         update_trigger: Incrementar para invalidar el caché. Se usa
@@ -94,22 +248,33 @@ def get_referencias_factureros(update_trigger: int = 0) -> tuple[list[str], list
         APIConnectionError: Si la API falla y no hay caché disponible.
         APIResponseError: Si la API retorna un error y no hay caché.
     """
-    df = get_precarizados(update_trigger=update_trigger)
-    return _valores_unicos(df, "actividad"), _valores_unicos(df, "partida")
+    actividades: list[str] = _fetch_referencia(
+        Endpoints.SLAVE_FACTUREROS_ACTIVIDADES.value,
+        _PARQUET_ACTIVIDADES,
+        update_trigger,
+    )
+    partidas: list[str] = _fetch_referencia(
+        Endpoints.SLAVE_FACTUREROS_PARTIDAS.value,
+        _PARQUET_PARTIDAS,
+        update_trigger,
+    )
+    return actividades, partidas
 
 
 # --------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_referencias_honorarios(update_trigger: int = 0) -> tuple[list[str], list[str]]:
     """
-    Retorna la lista única y ordenada de ``tipo`` de comprobante de
-    la colección ``honorarios``, para poblar el ``selectbox`` de
+    Retorna las listas únicas y ordenadas de tipo de comprobante y de
+    cuentas corrientes de honorarios, para poblar los ``selectbox`` de
     ``views.modals.modal_honorarios``.
 
     Es el equivalente a :func:`get_referencias_factureros` para la
-    colección de honorarios: delega en :func:`get_honorarios` (que
-    trae su propio caché y fallback a Parquet) y extrae los valores
-    únicos con :func:`_valores_unicos`.
+    colección de honorarios: usa los endpoints ligeros dedicados
+    (``/slave/honorarios/tiposComprobantes`` y
+    ``/slave/honorarios/ctasCtes``) vía :func:`_fetch_referencia`, en
+    vez de descargar la colección completa. Cada lista tiene su propio
+    Parquet (lectura rápida < 24h + fallback degradado).
 
     Args:
         update_trigger: Incrementar para invalidar el caché. Se usa
@@ -124,8 +289,17 @@ def get_referencias_honorarios(update_trigger: int = 0) -> tuple[list[str], list
         APIConnectionError: Si la API falla y no hay caché disponible.
         APIResponseError: Si la API retorna un error y no hay caché.
     """
-    df = get_honorarios(selections=[], update_trigger=update_trigger)
-    return _valores_unicos(df, "tipo"), _valores_unicos(df, "cta_cte")
+    tipos: list[str] = _fetch_referencia(
+        Endpoints.SLAVE_HONORARIOS_TIPOS_COMPROBANTES.value,
+        _PARQUET_TIPOS_COMPROBANTES,
+        update_trigger,
+    )
+    ctas_ctes: list[str] = _fetch_referencia(
+        Endpoints.SLAVE_HONORARIOS_CTAS_CTES.value,
+        _PARQUET_CTAS_CTES,
+        update_trigger,
+    )
+    return tipos, ctas_ctes
 
 
 # --------------------------------------------------
@@ -133,89 +307,36 @@ def get_referencias_honorarios(update_trigger: int = 0) -> tuple[list[str], list
 def get_precarizados(
     filtro_avanzado: str = "",
     update_trigger: int = 0,
-    cache_file_path: str | None = None,
 ) -> pd.DataFrame:
     """
-    Obtiene el padrón de precarizados desde la API con fallback a un
-    caché local en formato Parquet.
+    Obtiene el padrón de precarizados desde la API.
 
-    Flujo de prioridad:
-
-        1. Si ``update_trigger == 0``, no hay filtro y existe un caché
-           vigente (< 24h), se retorna desde disco.
-        2. Si no, se consulta la API.
-        3. Si la API falla y existe un caché (cualquier antigüedad), se
-           usa como fallback silencioso.
-        4. Si la API falla y no hay caché, se re-lanza la excepción.
-
-    El ``@st.cache_data`` (TTL de 1 hora) agrega una capa de caché en
-    memoria por encima de la lógica anterior, evitando llamadas repetidas
-    a la API dentro del mismo TTL. Las excepciones no se cachean: se
-    re-lanzan en cada invocación para que la UI pueda notificarlas.
+    No persiste en Parquet (igual que :func:`get_honorarios`): el
+    ``@st.cache_data`` (TTL de 1 hora) es la única capa de caché, que
+    evita llamadas repetidas a la API dentro del mismo TTL. Las
+    excepciones no se cachean: se re-lanzan en cada invocación para que
+    la UI pueda notificarlas.
 
     Args:
         filtro_avanzado: Filtro dinámico (e.g. ``ejercicio=2024``).
         update_trigger: Incrementar para forzar la actualización de caché.
-        cache_file_path: Ruta al archivo Parquet. Si es ``None``, se usa
-            la ruta por defecto en ``utils.handling_path.get_cache_path``.
 
     Returns:
         DataFrame con los precarizados.
 
     Raises:
-        APIConnectionError: Si la API falla y no hay caché disponible.
-        APIResponseError: Si la API retorna un error y no hay caché.
+        APIConnectionError: Si la API falla.
+        APIResponseError: Si la API retorna un error.
     """
-    # Resolver ruta de caché por defecto
-    if cache_file_path is None:
-        cache_file_path = os.path.join(get_cache_path(), _PARQUET_PRECARIZADOS)
-
-    # 1. Intentar leer del caché local si está vigente
-    if (
-        update_trigger == 0
-        and filtro_avanzado == ""
-        and cache_file_path
-        and os.path.exists(cache_file_path)
-    ):
-        mtime: datetime = datetime.fromtimestamp(os.path.getmtime(cache_file_path))
-        if datetime.now() - mtime < timedelta(hours=24):
-            try:
-                return pd.read_parquet(cache_file_path)
-            except (OSError, ValueError) as read_exc:
-                logger.warning(
-                    "No se pudo leer el caché local (%s): %s",
-                    type(read_exc).__name__,
-                    read_exc,
-                )
-
-    # 2. Consultar la API
     params_peticion: dict[str, Any] = {
         "limit": 0,
         "queryFilter": filtro_avanzado,
     }
-    try:
-        df: pd.DataFrame = fetch_dataframe(
-            Endpoints.SLAVE_FACTUREROS.value, params=params_peticion
-        )
-    except (ex.APIConnectionError, ex.APIResponseError) as api_exc:
-        # 3. Fallback best-effort: usar caché viejo si existe
-        if cache_file_path and os.path.exists(cache_file_path):
-            try:
-                logger.warning("API no disponible, usando caché local: %s", api_exc)
-                return pd.read_parquet(cache_file_path)
-            except (OSError, ValueError) as read_exc:
-                logger.error(
-                    "No se pudo leer el caché local de fallback: %s",
-                    read_exc,
-                )
-        # 4. Sin fallback: propagar la excepción original
-        raise
-
-    # API exitosa - persistir en caché si no hay filtro
+    df: pd.DataFrame = fetch_dataframe(
+        Endpoints.SLAVE_FACTUREROS.value, params=params_peticion
+    )
     if not df.empty:
         df = df.sort_values(["nombre_completo", "actividad", "partida"], ascending=True)
-        if filtro_avanzado == "" and cache_file_path:
-            df.to_parquet(cache_file_path)
 
     return df
 
@@ -227,150 +348,11 @@ def get_ejercicios_list() -> list[int]:
 
 
 # --------------------------------------------------
-def _es_fetch_completo(
-    selections: list[tuple[str, list[Any]]],
-    filtro_avanzado: str,
-) -> bool:
-    """
-    Indica si un fetch de honorarios NO tiene ningún filtro activo.
-
-    Sólo un fetch completo debe escribirse en el Parquet: el archivo
-    es el snapshot íntegro que usan la lectura rápida y el fallback;
-    guardarlo filtrado lo corrompería (un fetch del ejercicio en curso
-    pisaría todos los demás).
-
-    Args:
-        selections: Pares ``(parametro, valores)`` de los filtros
-            server-side (ej. ``("ejercicio", [2026])``).
-        filtro_avanzado: Filtro avanzado Mongo-style (vacío si no hay).
-
-    Returns:
-        ``True`` si no hay selections activos ni filtro avanzado.
-    """
-    if filtro_avanzado:
-        return False
-    return all(not valores for _, valores in selections)
-
-
-# --------------------------------------------------
-def _filtrar_por_seleccion(
-    df: pd.DataFrame,
-    selections: list[tuple[str, list[Any]]],
-) -> pd.DataFrame | None:
-    """
-    Aplica ``selections`` a un DataFrame ya cargado (snapshot local).
-
-    Normaliza valores a ``str`` para tolerar diferencias de tipo
-    (``2026`` int vs ``"2026"`` str) al comparar contra la columna.
-
-    Args:
-        df: DataFrame a filtrar (snapshot del caché en disco).
-        selections: Pares ``(parametro, valores)``; los valores vacíos
-            se ignoran (sin filtro para ese parámetro).
-
-    Returns:
-        El DataFrame filtrado (posiblemente vacío), o ``None`` si algún
-        parámetro con valores no corresponde a una columna del
-        DataFrame: en ese caso el llamador NO puede resolver el filtro
-        localmente y debe consultar a la API.
-    """
-    mascara: pd.Series = pd.Series(True, index=df.index)
-    for nombre_param, valores in selections:
-        if not valores:
-            continue
-        if nombre_param not in df.columns:
-            return None
-        mascara &= df[nombre_param].astype(str).isin({str(v) for v in valores})
-    return df[mascara]
-
-
-# --------------------------------------------------
 @st.cache_data(ttl=3600)
 def get_honorarios(
-    selections: list[tuple[str, list[Any]]],
-    filtro_avanzado: str = "",
-    update_trigger: int = 0,
-    cache_file_path: str | None = None,
+    selections: list, filtro_avanzado: str = "", update_trigger: int = 0
 ) -> pd.DataFrame:
-    """
-    Obtiene el padrón de honorarios desde la API con fallback a un
-    caché local en formato Parquet.
 
-    El Parquet es un **snapshot completo**: se escribe SÓLO cuando el
-    fetch no tiene ningún filtro activo (:func:`_es_fetch_completo`),
-    de modo que un fetch del ejercicio en curso no pise al snapshot a
-    los demás.
-
-    Flujo de prioridad:
-
-        1. Si ``update_trigger == 0`` y no hay filtro avanzado, se
-           lee el snapshot vigente (< 24h) y se le aplica
-           ``selections`` en memoria (:func:`_filtrar_por_seleccion`):
-           la vista recibe exactamente lo pedido sin ir a la API. Si
-           algún parámetro no es una columna del snapshot, continúa
-           a la API.
-        2. Si no, se consulta la API.
-        3. Si la API falla y existe el snapshot (cualquier antigüedad),
-           se usa como fallback aplicándole también ``selections``
-           (subconjunto pedido, no el dataset completo).
-        4. Si la API falla y no hay caché utilizable, se re-lanza la
-           excepción.
-
-    El ``@st.cache_data`` (TTL de 1 hora) agrega una capa de caché en
-    memoria por encima de la lógica anterior, evitando llamadas repetidas
-    a la API dentro del mismo TTL. Las excepciones no se cachean: se
-    re-lanzan en cada invocación para que la UI pueda notificarlas.
-
-    Args:
-        selections: Pares ``(parametro, valores)`` de los filtros
-            server-side (ej. ``("ejercicio", [2026])``); lista vacía
-            o valores vacíos => sin filtro para ese parámetro.
-        filtro_avanzado: Filtro dinámico (e.g. ``ejercicio=2024``).
-        update_trigger: Incrementar para forzar la actualización de caché.
-        cache_file_path: Ruta al archivo Parquet. Si es ``None``, se usa
-            la ruta por defecto en ``utils.handling_path.get_cache_path``.
-
-    Returns:
-        DataFrame con los honorarios.
-
-    Raises:
-        APIConnectionError: Si la API falla y no hay caché disponible.
-        APIResponseError: Si la API retorna un error y no hay caché.
-    """
-    # Resolver ruta de caché por defecto
-    if cache_file_path is None:
-        cache_file_path = os.path.join(get_cache_path(), _PARQUET_HONORARIOS)
-
-    # 1. Lectura rápida del snapshot en disco (< 24h). El archivo es
-    #    el dataset COMPLETO; aquí se le aplica ``selections`` para
-    #    devolver exactamente lo pedido. Si algún parámetro no es una
-    #    columna del snapshot no se puede filtrar localmente y se
-    #    continúa hacia la API.
-    if (
-        update_trigger == 0
-        and filtro_avanzado == ""
-        and cache_file_path
-        and os.path.exists(cache_file_path)
-    ):
-        mtime: datetime = datetime.fromtimestamp(os.path.getmtime(cache_file_path))
-        if datetime.now() - mtime < timedelta(hours=24):
-            try:
-                df_local: pd.DataFrame = pd.read_parquet(cache_file_path)
-            except (OSError, ValueError) as read_exc:
-                logger.warning(
-                    "No se pudo leer el caché local (%s): %s",
-                    type(read_exc).__name__,
-                    read_exc,
-                )
-            else:
-                df_local_filtrado: pd.DataFrame | None = _filtrar_por_seleccion(
-                    df_local, selections
-                )
-                if df_local_filtrado is not None:
-                    return df_local_filtrado
-
-    # 2. Consultar la API (``queryFilter`` = filtro avanzado, igual
-    # que en get_precarizados; sin esta clave el filtro se ignoraba).
     params_peticion = {
         "limit": 0,
         "queryFilter": filtro_avanzado,
@@ -379,39 +361,17 @@ def get_honorarios(
         if valores:
             params_peticion[nombre_param] = ",".join(map(str, valores))
 
-    try:
-        df: pd.DataFrame = fetch_dataframe(
-            Endpoints.SLAVE_HONORARIOS.value, params=params_peticion
-        )
-    except (ex.APIConnectionError, ex.APIResponseError) as api_exc:
-        # 3. Fallback best-effort: usar el snapshot viejo si existe,
-        #    aplicándole también ``selections`` para que el usuario
-        #    vea el subconjunto pedido y no el dataset completo.
-        if cache_file_path and os.path.exists(cache_file_path):
-            try:
-                logger.warning("API no disponible, usando caché local: %s", api_exc)
-                df_local = pd.read_parquet(cache_file_path)
-            except (OSError, ValueError) as read_exc:
-                logger.error(
-                    "No se pudo leer el caché local de fallback: %s",
-                    read_exc,
-                )
-            else:
-                df_local_filtrado = _filtrar_por_seleccion(df_local, selections)
-                if df_local_filtrado is not None:
-                    return df_local_filtrado
-        # 4. Sin fallback utilizable: propagar la excepción original
-        raise
+    print(
+        f"get_honorarios: selections={selections}, filtro_avanzado={filtro_avanzado}, update_trigger={update_trigger}"
+    )
 
-    # API exitosa: persistir SÓLO si el fetch fue completo (sin
-    # selections activos ni filtro avanzado). El Parquet es un
-    # snapshot íntegro; guardarlo filtrado lo corrompería.
+    df: pd.DataFrame = fetch_dataframe(
+        Endpoints.SLAVE_HONORARIOS.value, params=params_peticion
+    )
     if not df.empty:
         df = df.sort_values(
             ["ejercicio", "fecha", "nro_comprobante"], ascending=[False, False, True]
         )
-        if _es_fetch_completo(selections, filtro_avanzado) and cache_file_path:
-            df.to_parquet(cache_file_path)
 
     return df
 
@@ -441,33 +401,28 @@ def sincronizar_caches(
     trigger_precarizados: int = 0,
 ) -> tuple[dict[str, int], dict[str, str]]:
     """
-    Sincronización ligera del caché: memoria + API + Parquet del padrón.
+    Sincronización ligera del caché: memoria + API + Parquet de
+    referencias.
 
     Pasos:
 
     1. Limpia el caché en memoria (``st.cache_data`` y
        ``st.cache_resource``): invalida TODAS las funciones con caché,
        incluidas las de honorarios.
-    2. Re-consulta el padrón de precarizados a la API con el
-       ``update_trigger`` provisto (≠0 salta la lectura del Parquet
-       vigente), lo que repuebla la memoria **y reescribe**
-       ``precarizados_cache.parquet``.
+    2. Re-consulta el padrón de precarizados a la API, lo que repuebla
+       la memoria (ya sin Parquet en disco, igual que honorarios).
+    3. Re-consulta las cuatro listas de referencia (actividades,
+       partidas, tipos de comprobante y ctas. ctes.) y **re-escribe**
+       sus cuatro Parquet.
 
     **Honorarios NO se descarga aquí**: cada vista sólo necesita el
     ejercicio que está viendo (lo trae ella misma con el trigger ya
-    invalidado por el caller) y ``honorarios_cache.parquet`` se
-    refresca (o se lee localmente) al cargar la vista de Honorarios
-    o al abrir un modal, vía :func:`get_referencias_honorarios`. Así
-    el sync no baja decenas de miles de documentos que nadie va a
-    mirar.
+    invalidado por el caller). Así el sync no baja decenas de miles de
+    documentos que nadie va a mirar.
 
-    El ``trigger_precarizados`` **debe ser > 0**: con ``0``,
-    :func:`get_precarizados` leería el Parquet vigente sin consultar
-    la API, contrario al propósito de esta función.
-
-    Si la API falla, el Parquet previo **se conserva a propósito** como
-    fallback degradado y el recurso queda en ``errores`` informando que
-    no se actualizó: nada se silencia.
+    Si la API falla para un recurso, su Parquet previo **se conserva a
+    propósito** como fallback degradado y el recurso queda en
+    ``errores`` informando que no se actualizó: nada se silencia.
 
     Args:
         trigger_precarizados: Valor de
@@ -479,8 +434,8 @@ def sincronizar_caches(
     Returns:
         Tupla ``(actualizados, errores)``:
 
-        - ``actualizados``: recurso -> cantidad de registros traídos
-          desde la API y persistidos en caché.
+        - ``actualizados``: recurso -> cantidad de registros/valores
+          traídos desde la API.
         - ``errores``: recurso -> mensaje del fallo. Vacío si todo
           resultó OK.
     """
@@ -490,31 +445,66 @@ def sincronizar_caches(
 
     actualizados: dict[str, int] = {}
     errores: dict[str, str] = {}
+    # Con trigger 0 las referencias leerían su Parquet vigente sin
+    # tocar la API: se fuerza al menos a 1 para ir siempre a la red.
+    trigger_referencias: int = trigger_precarizados or 1
 
-    # ── Precarizados: reescribe precarizados_cache.parquet ──
-    ruta_precarizados: str = os.path.join(get_cache_path(), _PARQUET_PRECARIZADOS)
-    mtime_previo: float | None = _mtime_parquet(ruta_precarizados)
+    # ── Precarizados: sólo memoria + API (sin Parquet) ──
     try:
         df_precarizados: pd.DataFrame = get_precarizados(
             update_trigger=trigger_precarizados
         )
     except ex.AppBaseException as api_exc:
         errores["Precarizados"] = str(api_exc)
-    except Exception as exc:  # p.ej. OSError al escribir el Parquet
+    except Exception as exc:  # fallo inesperado, se informa igual
         errores["Precarizados"] = f"{type(exc).__name__}: {exc}"
     else:
-        sin_cambios: bool = (
-            mtime_previo is not None
-            and _mtime_parquet(ruta_precarizados) == mtime_previo
-        )
-        if sin_cambios:
-            # El Parquet no se re-escribió: la API falló y se sirvió
-            # el fallback, o devolvió datos vacíos.
-            errores["Precarizados"] = (
-                "el caché Parquet local no fue re-escrito (API vacía "
-                "o no disponible); los datos NO se actualizaron."
+        actualizados["Precarizados"] = len(df_precarizados)
+
+    # ── Listas de referencia: reescribe sus cuatro Parquet ──
+    referencias: dict[str, tuple[str, str]] = {
+        "Factureros · Actividades": (
+            Endpoints.SLAVE_FACTUREROS_ACTIVIDADES.value,
+            _PARQUET_ACTIVIDADES,
+        ),
+        "Factureros · Partidas": (
+            Endpoints.SLAVE_FACTUREROS_PARTIDAS.value,
+            _PARQUET_PARTIDAS,
+        ),
+        "Honorarios · Tipos de Comprobante": (
+            Endpoints.SLAVE_HONORARIOS_TIPOS_COMPROBANTES.value,
+            _PARQUET_TIPOS_COMPROBANTES,
+        ),
+        "Honorarios · Ctas. Ctes.": (
+            Endpoints.SLAVE_HONORARIOS_CTAS_CTES.value,
+            _PARQUET_CTAS_CTES,
+        ),
+    }
+    for recurso, (endpoint, parquet_name) in referencias.items():
+        ruta: str = os.path.join(get_cache_path(), parquet_name)
+        mtime_previo: float | None = _mtime_parquet(ruta)
+        try:
+            valores: list[str] = _fetch_referencia(
+                endpoint, parquet_name, update_trigger=trigger_referencias
             )
+        except ex.AppBaseException as api_exc:
+            errores[recurso] = str(api_exc)
+        except Exception as exc:  # fallo inesperado, se informa igual
+            errores[recurso] = f"{type(exc).__name__}: {exc}"
         else:
-            actualizados["Precarizados"] = len(df_precarizados)
+            sin_cambios: bool = (
+                bool(valores)
+                and mtime_previo is not None
+                and _mtime_parquet(ruta) == mtime_previo
+            )
+            if sin_cambios:
+                # El Parquet no se re-escribió: la API falló y se sirvió
+                # el fallback, o devolvió datos vacíos.
+                errores[recurso] = (
+                    "el caché Parquet local no fue re-escrito (API vacía "
+                    "o no disponible); los datos NO se actualizaron."
+                )
+            else:
+                actualizados[recurso] = len(valores)
 
     return actualizados, errores

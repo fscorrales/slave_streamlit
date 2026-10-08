@@ -153,16 +153,18 @@ def build_navigation() -> None:
             use_container_width=True,
             help=(
                 "Invalida los cachés (memoria y triggers), baja el "
-                "padrón de Precarizados y deja a cada vista bajando "
-                "sus datos frescos desde la API."
+                "padrón de Precarizados, refresca las listas de "
+                "referencia y deja a cada vista bajando sus datos "
+                "frescos desde la API."
             ),
         ):
             # 1) Invalida los triggers de sesión (grillas y referencias).
             trigger_precarizados = incrementar_triggers_sincronizacion()
 
-            # 2) Sincronización ligera: limpia la memoria y refresca el
-            #    padrón. Honorarios sólo se invalida: cada vista baja
-            #    su ejercicio y el Parquet lo refrescan los modales.
+            # 2) Sincronización ligera: limpia la memoria, refresca el
+            #    padrón y los Parquet de las listas de referencia.
+            #    Honorarios sólo se invalida: cada vista baja su
+            #    ejercicio cuando lo necesita.
             with st.spinner("Sincronizando con la API..."):
                 actualizados, errores = sincronizar_caches(
                     trigger_precarizados=trigger_precarizados,
