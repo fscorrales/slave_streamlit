@@ -9,7 +9,7 @@ ENTRY_POINT = "run.py"  # El script lanzador
 STREAMLIT_APP = "app.py"  # Tu app principal
 # SRC_DIR = "src"  # Carpeta con tu lógica y .env
 STREAMLIT_CONFIG = ".streamlit"
-ICON_FILE = "icono_invico.ico"  # El archivo de icono de la app
+ICON_FILE = "app_icon.ico"  # El archivo de icono de la app
 
 # HIDDEN_IMPORTS = [
 #     "src.automation.sscc.banco_invico_runner",
@@ -38,9 +38,9 @@ def build():
         "--collect-all=typer",
         "--collect-all=httpx",
         "--collect-all=pydantic_settings",
-        "--collect-all=playwright",
+        # "--collect-all=playwright",
         "--copy-metadata=streamlit",
-        "--copy-metadata=playwright",
+        # "--copy-metadata=playwright",
         # Inclusión de archivos y carpetas
         f"--add-data={STREAMLIT_APP}{os.pathsep}.",
         # f"--add-data={SRC_DIR}{os.pathsep}{SRC_DIR}",

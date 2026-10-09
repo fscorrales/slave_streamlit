@@ -207,8 +207,7 @@ def post_request(
     token: Optional[str] = None,
 ) -> dict[str, Any]:
     """
-    Realiza un POST genérico a la API. Útil para actualizar base de datos
-    tras ejecuciones de Playwright/Pywinauto.
+    Realiza un POST genérico a la API. Útil para actualizar base de datos.
     """
     headers = _get_headers(token=token)
 
@@ -244,8 +243,7 @@ def put_request(
     token: Optional[str] = None,
 ) -> dict[str, Any]:
     """
-    Realiza un PUT genérico a la API. Útil para actualizar base de datos
-    tras ejecuciones de Playwright/Pywinauto.
+    Realiza un PUT genérico a la API. Útil para actualizar base de datos.
     """
     headers = _get_headers(token=token)
 
@@ -280,8 +278,7 @@ def delete_request(
     token: Optional[str] = None,
 ) -> dict[str, Any]:
     """
-    Realiza un DELETE genérico a la API. Útil para actualizar base de datos
-    tras ejecuciones de Playwright/Pywinauto.
+    Realiza un DELETE genérico a la API. Útil para actualizar base de datos.
     """
     headers = _get_headers(token=token)
 

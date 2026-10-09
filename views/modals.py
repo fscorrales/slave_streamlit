@@ -544,7 +544,7 @@ def modal_honorarios(
         # ═══════════════ PASO 1 · INFORME (GATE) ═══════════════
         st.markdown("#### Paso 1 · Informe por Destino")
         st.caption(
-            "Cargue el CSV del *Resumen de Pagos por Destino*. El "
+            "Cargue el CSV del *Informe por Destino* del *Sistema de Gestión Financiera*. El "
             "formulario se habilita únicamente si **todos** los agentes "
             "figuran en el padrón de Precarizados con CUIT, Actividad y "
             "Partida."
@@ -554,7 +554,7 @@ def modal_honorarios(
             "Archivo CSV",
             type=["csv"],
             key=f"{key_prefix}_upload_informe",
-            help="Exportado del Sistema de Gestión Financiera con título 'Resumen de Pagos por Destino'.",
+            help="Exportado del Sistema de Gestión Financiera en el menú 'Informes / Por Destino'.",
         )
 
         if uploaded_file is None:
