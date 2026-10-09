@@ -4,25 +4,30 @@ import shutil
 import PyInstaller.__main__
 
 # --- CONFIGURACIÓN ---
-APP_NAME = "Slave"  # Nombre de tu aplicación
-ENTRY_POINT = "run.py"  # El script lanzador
-STREAMLIT_APP = "app.py"  # Tu app principal
-# SRC_DIR = "src"  # Carpeta con tu lógica y .env
+APP_NAME = "Slave"
+ENTRY_POINT = "run.py"
+STREAMLIT_APP = "app.py"
 STREAMLIT_CONFIG = ".streamlit"
-ICON_FILE = "app_icon.ico"  # El archivo de icono de la app
+ICON_FILE = "app_icon.ico"
 
-# HIDDEN_IMPORTS = [
-#     "src.automation.sscc.banco_invico_runner",
-#     "src.automation.sgf.resumen_rend_obras_runner",
-#     "src.automation.sgf.resumen_rend_prov_runner",
-# ]
+# Paquetes locales de la app. PyInstaller sólo analiza run.py (app.py entra
+# como dato), así que hay que forzar su inclusión: los módulos van al PYZ y,
+# de paso, se descubren sus dependencias de terceros (pydantic, dotenv,
+# openpyxl, rich...).
+LOCAL_PACKAGES = ["views", "components", "models", "services", "utils"]
 
 
-def build():
+def build() -> None:
     # 1. Limpiar carpetas de compilaciones previas
     for folder in ["build", "dist"]:
         if os.path.exists(folder):
-            shutil.rmtree(folder)
+            try:
+                shutil.rmtree(folder)
+            except OSError as exc:
+                raise SystemExit(
+                    f"No se pudo borrar '{folder}': {exc}. "
+                    "¿Seguí el Slave.exe de una compilación anterior corriendo?"
+                ) from exc
             print(f"Borrando {folder}...")
 
     # 2. Definir los argumentos de PyInstaller
@@ -31,28 +36,27 @@ def build():
         f"--name={APP_NAME}",
         "--onefile",
         "--clean",
-        # "--windowed",  # Para que no se abra una consola negra detrás (opcional)
-        "--additional-hooks-dir=.",
+        # "--windowed",  # Requiere consola: run.py usa print/input en --automation
         # Recolección de librerías "rebeldes"
         "--collect-all=streamlit",
-        "--collect-all=typer",
         "--collect-all=httpx",
-        "--collect-all=pydantic_settings",
-        # "--collect-all=playwright",
         "--copy-metadata=streamlit",
-        # "--copy-metadata=playwright",
-        # Inclusión de archivos y carpetas
+        # Archivos en disco que se leen en tiempo de ejecución
         f"--add-data={STREAMLIT_APP}{os.pathsep}.",
-        # f"--add-data={SRC_DIR}{os.pathsep}{SRC_DIR}",
         f"--add-data={STREAMLIT_CONFIG}{os.pathsep}.streamlit",
         f"--add-data=pyproject.toml{os.pathsep}.",
         f"--icon={ICON_FILE}",
     ]
 
-    # for module in HIDDEN_IMPORTS:
-    #     args.append(f"--hidden-import={module}")
+    # 3. Código local: submódulos al PYZ (analiza sus dependencias 3ª) ...
+    for package in LOCAL_PACKAGES:
+        args.append(f"--collect-submodules={package}")
 
-    # 3. Ejecutar PyInstaller
+    # ... y los .py de views en disco, porque st.Page() los abre y compila
+    # desde el disco (streamlit/navigation/page.py is_file() + ScriptCache).
+    args.append(f"--add-data=views{os.pathsep}views")
+
+    # 4. Ejecutar PyInstaller
     print(f"Iniciando compilación de {APP_NAME}...")
     PyInstaller.__main__.run(args)
     print("\n¡Compilación finalizada! Revisa la carpeta /dist")
