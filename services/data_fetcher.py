@@ -361,10 +361,6 @@ def get_honorarios(
         if valores:
             params_peticion[nombre_param] = ",".join(map(str, valores))
 
-    print(
-        f"get_honorarios: selections={selections}, filtro_avanzado={filtro_avanzado}, update_trigger={update_trigger}"
-    )
-
     df: pd.DataFrame = fetch_dataframe(
         Endpoints.SLAVE_HONORARIOS.value, params=params_peticion
     )

@@ -4,7 +4,7 @@ import streamlit as st
 
 import utils.exceptions as ex
 from services.auth_service import get_current_user, login, register
-from services.data_fetcher import get_precarizados
+from services.data_fetcher import get_referencias_factureros, get_referencias_honorarios
 from utils.context import set_token
 from views.aux_tables import report_data_version_key
 
@@ -63,14 +63,21 @@ def render_login() -> None:
                             with st.status(
                                 "Preparando Slave...", expanded=True
                             ) as status:
-                                st.write("Sincronizando Precarizados...")
+                                st.write("Sincronizando Referencias de Factureros...")
                                 data_version_key = report_data_version_key(
                                     "precarizados"
                                 )
                                 if data_version_key not in st.session_state:
                                     st.session_state[data_version_key] = 0
-                                get_precarizados(
+                                honorarios_key = "honorarios_dataframes_iteration"
+                                if honorarios_key not in st.session_state:
+                                    st.session_state[honorarios_key] = 0
+                                get_referencias_factureros(
                                     update_trigger=st.session_state[data_version_key]
+                                )
+                                st.write("Sincronizando Referencias de Honorarios...")
+                                get_referencias_honorarios(
+                                    update_trigger=st.session_state[honorarios_key]
                                 )
                                 status.update(
                                     label="Sincronización Completa",

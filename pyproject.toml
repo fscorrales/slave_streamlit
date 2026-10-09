@@ -1,6 +1,6 @@
 [project]
 name = "slave-streamlit"
-version = "0.25.0"
+version = "0.26.0"
 description = ""
 authors = [{ name = "Fernando Corrales", email = "fscpython@gmail.com" }]
 readme = "README.md"
