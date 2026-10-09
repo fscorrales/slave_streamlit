@@ -88,8 +88,8 @@ def apply_text_filters(
 #   - Posiciones 51..52 : pie de página.
 #
 # Mapeo de datos a campos del modelo ``InformePorDestino``.
-# Salvedades verificadas empíricamente sobre
-# ``services/informe_por_destino.csv``:
+# Salvedades verificadas empíricamente sobre el reporte
+# "Resumen de Pagos por Destino":
 #
 #   1. ``Firma`` (encabezado 18 / dato 34) NO forma parte del
 #      modelo, por lo que las retenciones quedan en 34..39.
@@ -117,9 +117,6 @@ _CAMPOS_SIN_DATO: tuple[str, ...] = ("mutual", "embargo")
 
 # Título que identifica al reporte esperado (posición 1).
 _TITULO_ESPERADO: str = "Resumen de Pagos por Destino"
-
-# Archivo por defecto cuando no se provee ningún argumento.
-_DEFAULT_CSV: Path = Path(__file__).resolve().parent / "informe_por_destino.csv"
 
 # --------------------------------------------------
 # Campos de la línea de un comprobante de honorarios.
@@ -360,7 +357,7 @@ def merge_informe_con_precarizados(
 
 # --------------------------------------------------
 def process_informe_por_destino(
-    dataframe: pd.DataFrame | str | Path | BytesIO | None = None,
+    dataframe: pd.DataFrame | str | Path | BytesIO,
 ) -> pd.DataFrame:
     """
     Lee y convierte el reporte "Resumen de Pagos por Destino" en un
@@ -382,8 +379,6 @@ def process_informe_por_destino(
             - ``BytesIO``: buffer en memoria (p.ej. ``BytesIO(f.getvalue())``
               con el archivo de ``st.file_uploader``, cuyo
               ``UploadedFile`` hereda de ``BytesIO``).
-            - ``None``: se lee ``services/informe_por_destino.csv``
-              (conveniencia para pruebas directas).
 
     Returns:
         DataFrame con las columnas de ``InformePorDestino`` en el
@@ -397,9 +392,7 @@ def process_informe_por_destino(
         mensaje de "CSV Vacío o Incorrecto".
     """
     # ── 1. Resolver la entrada a un DataFrame crudo ──────────
-    if dataframe is None:
-        dataframe = read_csv_file(_DEFAULT_CSV)
-    elif isinstance(dataframe, (str, Path, BytesIO)):
+    if isinstance(dataframe, (str, Path, BytesIO)):
         # Ruta a un CSV **o** buffer en memoria (``st.file_uploader``
         # devuelve un ``UploadedFile`` que hereda de ``BytesIO``).
         # Sin esta rama, un ``BytesIO`` caería en el ``isinstance``
