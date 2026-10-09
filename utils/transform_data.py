@@ -1,6 +1,7 @@
 __all__ = [
     "build_retenciones_payload",
     "formato_moneda_ar",
+    "parse_moneda_ar",
     "normalize_name_for_match",
 ]
 
@@ -69,6 +70,56 @@ def build_retenciones_payload(data: dict) -> dict:
 
 
 # --------------------------------------------------
-def formato_moneda_ar(valor):
+def formato_moneda_ar(valor: object) -> str:
     # Formato inicial: 1,234.56 -> X para no solapar reemplazos
     return f"$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+# --------------------------------------------------
+def parse_moneda_ar(valor: object) -> float:
+    """
+    Convierte un importe con formato argentino a ``float``.
+
+    Inverso de :func:`formato_moneda_ar`: acepta tanto el valor
+    numerico crudo como la cadena ya formateada (``"$ 1.234,56"``).
+
+    Args:
+        valor: Importe numerico o cadena con formato AR/US.
+
+    Returns:
+        El importe como ``float``. ``0.0`` si el valor es nulo o no
+        numerico (best-effort, igual que ``_parse_moneda`` de
+        ``services/process_df.py``: no interrumpe al caller).
+    """
+    if valor is None or pd.isna(valor):
+        return 0.0
+    if isinstance(valor, str):
+        texto: str = valor.strip().replace("$", "").replace(" ", "")
+        if texto == "" or texto.lower() in ("nan", "-"):
+            return 0.0
+        if "," in texto and "." in texto:
+            # El ultimo separador es el decimal: "1.234,56" (AR)
+            # o "1,234.56" (US).
+            if texto.rfind(",") > texto.rfind("."):
+                texto = texto.replace(".", "").replace(",", ".")
+            else:
+                texto = texto.replace(",", "")
+        elif "," in texto:
+            # Sin punto: la coma es el separador decimal ("1234,56").
+            texto = texto.replace(",", ".")
+        elif texto.count(".") > 1:
+            # Varios puntos: todos son de miles ("1.234.567").
+            texto = texto.replace(".", "")
+        elif texto.count(".") == 1:
+            parte_entera, _, parte_decimal = texto.partition(".")
+            if len(parte_decimal) > 2:
+                # Un solo punto con 3+ digitos: miles ("1.234").
+                texto = parte_entera + parte_decimal
+        try:
+            return float(texto)
+        except ValueError:
+            return 0.0
+    try:
+        return float(valor)
+    except (TypeError, ValueError):
+        return 0.0

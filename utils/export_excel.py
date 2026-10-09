@@ -11,7 +11,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.worksheet.worksheet import Worksheet
 
-from utils.transform_data import formato_moneda_ar
+from utils.transform_data import formato_moneda_ar, parse_moneda_ar
 
 TITULO_COMPROBANTE: str = "Comprobante de Honorarios"
 CANTIDAD_COLUMNAS: int = 3
@@ -52,7 +52,11 @@ def _moneda(valor: object) -> str:
     """Formatea un importe con el formato monetario AR de la vista."""
     if valor is None or pd.isna(valor):
         return formato_moneda_ar(0)
-    return formato_moneda_ar(valor)  # type: ignore[arg-type]
+    if isinstance(valor, str):
+        # La vista puede entregar el importe ya formateado
+        # ("$ 1.234,56"): se revierte a float para reformatearlo.
+        return formato_moneda_ar(parse_moneda_ar(valor))
+    return formato_moneda_ar(valor)
 
 
 # --------------------------------------------------
