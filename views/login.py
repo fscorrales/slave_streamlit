@@ -55,7 +55,7 @@ def render_login() -> None:
                                 user_data = get_current_user(token)
 
                             st.session_state["user"] = {
-                                "role": user_data.role.value,
+                                "roles": [role.value for role in user_data.roles],
                                 "username": user_data.username,
                                 "id": user_data.id,
                             }

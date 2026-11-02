@@ -13,6 +13,8 @@ class Role(str, Enum):
     ADMIN = "admin"
     USER = "user"
     PENDING = "pending"
+    EECC = "eecc"
+    ICARO = "icaro"
 
 
 class PublicStoredUser(BaseModel):
@@ -20,7 +22,7 @@ class PublicStoredUser(BaseModel):
 
     id: str
     username: str
-    role: Role
+    roles: list[Role]
 
 
 class FactureroReport(BaseModel):
