@@ -11,10 +11,16 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.worksheet.worksheet import Worksheet
 
-from utils.transform_data import formato_moneda_ar, parse_moneda_ar
+from utils.transform_data import parse_moneda_ar
 
 TITULO_COMPROBANTE: str = "Comprobante de Honorarios"
 CANTIDAD_COLUMNAS: int = 3
+
+# Formato numerico de Excel para importes: la celda guarda un float
+# (el usuario puede sumar/restar en Excel) y el "$" junto a los
+# separadores de miles/decimales los aplica Excel segun la
+# configuracion regional de quien abre el archivo.
+FORMATO_MONEDA_XLSX: str = '"$ "#,##0.00'
 
 # Campos del comprobante: (etiqueta mostrada, clave en ``main_data``)
 CAMPOS_COMPROBANTE: list[tuple[str, str]] = [
@@ -48,15 +54,15 @@ def _texto(valor: object) -> str:
 
 
 # --------------------------------------------------
-def _moneda(valor: object) -> str:
-    """Formatea un importe con el formato monetario AR de la vista."""
+def _moneda(valor: object) -> float:
+    """Convierte un importe a ``float`` para escribirlo como numero en Excel."""
     if valor is None or pd.isna(valor):
-        return formato_moneda_ar(0)
+        return 0.0
     if isinstance(valor, str):
         # La vista puede entregar el importe ya formateado
-        # ("$ 1.234,56"): se revierte a float para reformatearlo.
-        return formato_moneda_ar(parse_moneda_ar(valor))
-    return formato_moneda_ar(valor)
+        # ("$ 1.234,56"): se revierte a float para conservarlo numerico.
+        return parse_moneda_ar(valor)
+    return float(valor)
 
 
 # --------------------------------------------------
@@ -68,8 +74,8 @@ def _formato_fecha(valor: object) -> str:
 
 
 # --------------------------------------------------
-def _valor_comprobante(campo: str, valor: object) -> str:
-    """Normaliza un campo de ``main_data`` para mostrarlo en la hoja."""
+def _valor_comprobante(campo: str, valor: object) -> str | float:
+    """Normaliza un campo de ``main_data`` para la hoja (importe como numero)."""
     if campo == "fecha":
         return _formato_fecha(valor)
     if campo == "importe_bruto":
@@ -121,18 +127,22 @@ def _escribir_encabezado_columnas(
 def _escribir_fila_valores(
     ws: Worksheet,
     fila: int,
-    valores: list[str],
+    valores: list[str | float],
     alinear_derecha: tuple[int, ...] = (),
+    columnas_moneda: tuple[int, ...] = (),
     es_total: bool = False,
 ) -> int:
     """Escribe una fila de datos con bordes. Devuelve la próxima fila."""
-    for columna, texto in enumerate(valores, start=1):
-        celda = ws.cell(row=fila, column=columna, value=texto)
+    for columna, valor in enumerate(valores, start=1):
+        celda = ws.cell(row=fila, column=columna, value=valor)
         celda.border = _BORDER_CELDA
         if es_total:
             celda.font = _FONT_CABECERA
         if columna in alinear_derecha:
             celda.alignment = Alignment(horizontal="right")
+        if columna in columnas_moneda:
+            # Numerico + formato: el importe es operable en Excel.
+            celda.number_format = FORMATO_MONEDA_XLSX
     return fila + 1
 
 
@@ -149,6 +159,10 @@ def build_comprobante_xlsx(
     1. Datos del comprobante (``main_data``).
     2. Importes agrupados por actividad y partida (``df_imp``).
     3. Retenciones (``df_ret``).
+
+    Los importes se escriben como **numero** (``float``) con el formato
+    ``FORMATO_MONEDA_XLSX``: en Excel se ven como ``$ 1.234,56`` segun
+    la configuracion regional y el usuario puede operar con ellos.
 
     Args:
         main_data: Datos generales del comprobante (ejercicio, mes, fecha,
@@ -181,6 +195,8 @@ def build_comprobante_xlsx(
             row=fila, column=2, value=_valor_comprobante(campo, main_data.get(campo))
         )
         valor_celda.border = _BORDER_CELDA
+        if campo == "importe_bruto":
+            valor_celda.number_format = FORMATO_MONEDA_XLSX
         fila += 1
     fila += 1  # fila en blanco entre secciones
 
@@ -197,6 +213,7 @@ def build_comprobante_xlsx(
                 _moneda(registro.get("importe_bruto")),
             ],
             alinear_derecha=(3,),
+            columnas_moneda=(3,),
         )
     total_importes = df_imp["importe_bruto"].sum() if not df_imp.empty else 0
     fila = _escribir_fila_valores(
@@ -204,6 +221,7 @@ def build_comprobante_xlsx(
         fila,
         ["Total", "", _moneda(total_importes)],
         alinear_derecha=(3,),
+        columnas_moneda=(3,),
         es_total=True,
     )
     fila += 1  # fila en blanco entre secciones
@@ -220,6 +238,7 @@ def build_comprobante_xlsx(
                 fila,
                 [_texto(registro.get("codigo")), _moneda(registro.get("importe"))],
                 alinear_derecha=(2,),
+                columnas_moneda=(2,),
             )
         total_retenciones = df_ret["importe"].sum()
         fila = _escribir_fila_valores(
@@ -227,6 +246,7 @@ def build_comprobante_xlsx(
             fila,
             ["Total", _moneda(total_retenciones)],
             alinear_derecha=(2,),
+            columnas_moneda=(2,),
             es_total=True,
         )
 

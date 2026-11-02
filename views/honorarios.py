@@ -84,9 +84,9 @@ def dataframe_honorarios_comprobantes(
         df_filtrado = apply_text_filters(df_filtrado, valores_filtro)
 
         # La grilla muestra el importe formateado, pero df_filtrado
-        # conserva el valor numerico: la fila seleccionada (main_data)
-        # se pasa a build_comprobante_xlsx, que lo reformatea con
-        # formato_moneda_ar y falla con ValueError si recibe un str.
+        # conserva el valor numerico: main_data se pasa a
+        # build_comprobante_xlsx, que escribe el importe como numero
+        # (operable en Excel) en lugar de como texto.
         df_vista = df_filtrado.copy()
         df_vista["importe_bruto"] = df_vista["importe_bruto"].apply(
             formato_moneda_ar
